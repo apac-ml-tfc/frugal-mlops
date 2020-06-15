@@ -33,6 +33,7 @@ def get_dataset(channel, args):
 
     logger.info(f"Reading file {data_path}")
     df = pd.read_csv(data_path)
+    logger.info(f"Got shape {df.shape}")
 
     if isinstance(args.target, int):
         # args.target is a column index

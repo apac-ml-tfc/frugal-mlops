@@ -8,7 +8,6 @@ import random
 
 # External Dependencies:
 import numpy as np
-import timeit
 import torch
 from pytorch_tabnet.tab_model import TabNetClassifier, TabNetRegressor
 
@@ -71,8 +70,10 @@ def train(args):
 
     logger.info("Loading datasets")
     X_train, y_train = data.get_dataset(args.train, args)
+    logger.info(f"X_train {X_train.shape}, y_train {y_train.shape}")
     if args.validation:
         X_val, y_val = data.get_dataset(args.validation, args)
+        logger.info(f"X_val {X_val.shape}, y_val {y_val.shape}")
     else:
         X_val = None
         y_val = None
@@ -90,7 +91,7 @@ def train(args):
         # loss_fn unsupported
         "batch_size": args.batch_size,
         "virtual_batch_size": args.virtual_batch_size,
-        #"num_workers": args.num_workers,
+        "num_workers": args.num_workers,
         # drop_last unsupported
     }
     fit_params = { k: v for k, v in fit_params.items() if v is not None }
