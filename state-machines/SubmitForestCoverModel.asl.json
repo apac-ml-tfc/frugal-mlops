@@ -1,0 +1,24 @@
+{
+  "Comment": "Flow to register a model from DataSci sandbox to project space",
+  "StartAt": "Register Model",
+  "States": {
+    "Register Model": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${FunctionRegisterModelName}",
+        "Payload.$": "$"
+      },
+      "Next": "Test Transform"
+    },
+    "Test Transform": {
+      "Type": "Wait",
+      "Seconds": 20,
+      "Next": "Scale"
+    },
+    "Scale": {
+      "Type": "Pass",
+      "End": true
+    }
+  }
+}

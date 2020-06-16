@@ -1,0 +1,185 @@
+# CloudFormation for an ML project (potentially touching several containers, users)
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Parameters:
+  ProjectId:
+    Description: Used as a prefix for project resources.  Can be up to 12 characters, lowercase letters (a-z) only.
+    Type: String
+    Default: forestcover
+    AllowedPattern: "^[a-z]{1,12}"
+    ConstraintDescription: The ProjectId can be up to 12 characters, lowercase letters (a-z) only.
+Resources:
+
+
+##########  REPOSITORIES  ##########
+  CodeCommitRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Sub '${ProjectId}'
+      RepositoryDescription: !Sub '${ProjectId} data science project repository'
+
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectId}-source'
+
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectId}-artifacts'
+
+  LiveMonitoringBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectId}-monitoring'
+
+
+##########  PERMISSIONS  ##########
+# TODO: Everything very open at the moment to get things working
+  LambdaAdminRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub '${ProjectId}-LambdaAdminRole'
+      Path: !Sub '/${ProjectId}/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AdministratorAccess'
+
+  ModelAdminRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub '${ProjectId}-ModelAdminRole'
+      Path: !Sub '/${ProjectId}/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AdministratorAccess'
+
+  StepFunctionsXRayAccessPolicy:
+    # (As created by default in StepFunctions console)
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: !Sub '${ProjectId}-StepFnXRayAccess'
+      Path: !Sub '/${ProjectId}/'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'xray:PutTraceSegments'
+              - 'xray:PutTelemetryRecords'
+              - 'xray:GetSamplingRules'
+              - 'xray:GetSamplingTargets'
+            Resource: '*'
+
+  CloudWatchLogsDeliveryFullAccessPolicy:
+    # (As created by default in StepFunctions console)
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: !Sub '${ProjectId}-CWLogsDeliveryFullAccess'
+      Path: !Sub '/${ProjectId}/'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'logs:CreateLogDelivery'
+              - 'logs:GetLogDelivery'
+              - 'logs:UpdateLogDelivery'
+              - 'logs:DeleteLogDelivery'
+              - 'logs:ListLogDeliveries'
+              - 'logs:PutResourcePolicy'
+              - 'logs:DescribeResourcePolicies'
+              - 'logs:DescribeLogGroups'
+            Resource: '*'
+
+  StepFunctionAdminRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub '${ProjectId}-StepFunctionAdminRole'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - states.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
+        - !Ref StepFunctionsXRayAccessPolicy
+        - !Ref CloudWatchLogsDeliveryFullAccessPolicy
+
+
+##########  PIPELINE  ##########
+  CommonCodeLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: common-utils
+      Description: Dependencies for take action code
+      ContentUri: ../functions/common-util-layer/
+      CompatibleRuntimes:
+        - python3.8
+      RetentionPolicy: Retain
+
+  FunctionRegisterModel:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub '${ProjectId}-RegisterModel'
+      Description: Register a model from sandbox to project
+      Handler: main.handler
+      MemorySize: 256
+      Runtime: python3.8
+      Role: !GetAtt LambdaAdminRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          PROJECT_ID: !Ref ProjectId
+          PROJECT_BUCKET: !Ref ArtifactsBucket
+          PROJECT_MODEL_ROLE_ARN: !GetAtt ModelAdminRole.Arn
+      CodeUri: ../functions/register-model/
+      Layers:
+        - !Ref CommonCodeLayer
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    # Properties:
+    #   LogGroupName: # Whatevs, the default isn't too bad?
+    #   RetentionInDays: # 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653
+
+  PipelineStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      # Omitting name gives PipelineStateMachine-[GARBAGE], which might be nice enough for you but might not!
+      Name: !Sub '${ProjectId}-PipelineMachine'
+      DefinitionUri: ../state-machines/SubmitForestCoverModel.asl.json
+      DefinitionSubstitutions:
+        FunctionRegisterModelName: !Ref FunctionRegisterModel
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup: 
+              LogGroupArn: !GetAtt PipelineLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ALL  # or ERROR, FATAL, OFF (default)
+      Role: !GetAtt StepFunctionAdminRole.Arn
+      Type: STANDARD
+      # Tags:
+      #   - Key: ...
+      #     Value: ...

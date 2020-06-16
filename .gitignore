@@ -1,3 +1,7 @@
+#### Project Specific:
+**.tmp.yml
+
+#### Python Generic:
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
