@@ -1,12 +1,6 @@
 """Small utilities to make life easier: root package"""
 
+from . import project
 from . import smexps
 from . import spinner
-
-from datetime import datetime
-
-def append_timestamp(s: str, sep: str="-") -> str:
-    """Append current datetime to `s` in a format suitable for SageMaker job names"""
-    return s + datetime.now().strftime(
-        f"{sep}%Y{sep}%m{sep}%d{sep}%H{sep}%M{sep}%S"
-    )
+from .uid import append_timestamp
