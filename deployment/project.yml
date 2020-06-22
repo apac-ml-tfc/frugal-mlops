@@ -8,6 +8,11 @@ Parameters:
     Default: forestcover
     AllowedPattern: "^[a-z]{1,12}"
     ConstraintDescription: The ProjectId can be up to 12 characters, lowercase letters (a-z) only.
+  ManagerEmail:
+    Description: Project manager email address, to which approval requests for deployments will be sent.
+    Type: String
+    AllowedPattern: "^[\\x20-\\x45]?[\\w-\\+]+(\\.[\\w]+)*@[\\w-]+(\\.[\\w]+)*(\\.[a-z]{2,})$"
+    ConstraintDescription: Must be a valid email address.
 Resources:
 
 
@@ -113,20 +118,137 @@ Resources:
     Properties:
       RoleName: !Sub '${ProjectId}-StepFunctionAdminRole'
       AssumeRolePolicyDocument:
-        Version: 2012-10-17
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
-              Service:
-                - states.amazonaws.com
-            Action:
-              - 'sts:AssumeRole'
+              Service: states.amazonaws.com
+            Action: 'sts:AssumeRole'
       Path: /
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
         - !Ref StepFunctionsXRayAccessPolicy
         - !Ref CloudWatchLogsDeliveryFullAccessPolicy
 
+  ApiGatewayToStepFunctionsRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub '${ProjectId}-ApiToSFNRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs'
+        - 'arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess'
+        # TODO: Restrict down SFN access to target state machines only
+
+  ApiGatewayAccount:
+    # Important in case no APIs have been deployed in this AWS account before
+    Type: 'AWS::ApiGateway::Account'
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayToStepFunctionsRole.Arn
+
+
+##########  PROJECT API  ##########
+# We want to be able to generate clickable credential-free (just token-based) action links for emails, and
+# maybe some other tools too... So will deploy these endpoints on a project API
+  ProjectApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: !Sub '${ProjectId} Management API'
+      Description: !Sub 'API for ${ProjectId} project management actions'
+      FailOnWarnings: true
+
+  ApprovalResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref ProjectApi
+      ParentId: !GetAtt ProjectApi.RootResourceId
+      PathPart: respond
+
+  ApprovalMethod:
+    # Rather than adding in an extra Lambda function, direct API Gateway integration can handle the basics:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref ProjectApi
+      ResourceId: !Ref ApprovalResource
+      HttpMethod: GET  # (It's a GET because users will be clicking a generated link to open in browser)
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.querystring.taskToken: true  # true->Required, the Step Functions task token
+        method.request.querystring.action: true  # true->Required, the decision (approved/rejected)
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:states:action/SendTaskSuccess'
+        Credentials: !GetAtt ApiGatewayToStepFunctionsRole.Arn
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        RequestTemplates:
+          application/json: |-
+            {
+              "output": "{ \"Status\": \"$input.params('action')\" }",
+              "taskToken": "$input.params('taskToken')"
+            }
+        IntegrationResponses:
+          # We'll directly show simple HTML result pages, but of course you could redirect or do all sorts:
+          - SelectionPattern: 2\d{2}
+            StatusCode: 200
+            ResponseTemplates:
+              text/html: |-
+                <html>
+                  <body>
+                    <h1>Thank you</h1>
+                    <p>You may now close this page</p>
+                  </body>
+                </html>
+            ResponseParameters:
+              method.response.header.Content-Type: "'text/html'"
+          - SelectionPattern: 4\d{2}
+            StatusCode: 400
+            ResponseTemplates:
+              text/html: |-
+                <html>
+                  <body>
+                    <h1>Not permitted</h1>
+                    <p>This request has timed out or already been responded to.</p>
+                  </body>
+                </html>
+            ResponseParameters:
+              method.response.header.Content-Type: "'text/html'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Content-Type: true
+        - StatusCode: 400
+          ResponseParameters:
+            method.response.header.Content-Type: true
+
+  ProjectApiStage:
+    DependsOn:
+      - ApiGatewayAccount
+    Type: 'AWS::ApiGateway::Stage'
+    Properties:
+      DeploymentId: !Ref ApiDeployment
+      MethodSettings:
+        - DataTraceEnabled: true
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          ResourcePath: /*
+      RestApiId: !Ref ProjectApi
+      StageName: states
+
+  ApiDeployment:
+    Type: 'AWS::ApiGateway::Deployment'
+    DependsOn:
+      - ApprovalMethod
+    Properties:
+      RestApiId: !Ref ProjectApi
+      #StageName: dummy
 
 ##########  PIPELINE  ##########
   CommonCodeLayer:
@@ -158,6 +280,28 @@ Resources:
       Layers:
         - !Ref CommonCodeLayer
 
+  FunctionRequestApproval:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub '${ProjectId}-FunctionRequestApproval'
+      Description: Send approval request emails for queued models
+      Handler: main.handler
+      MemorySize: 256
+      Runtime: python3.8
+      Role: !GetAtt LambdaAdminRole.Arn
+      Timeout: 90
+      CodeUri: ../functions/request-approval/
+      Layers:
+        - !Ref CommonCodeLayer
+
+  ApprovalEmailTopic:
+    # Actually just a backup in case we're not able to use SES (see FunctionRequestApproval code)
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Endpoint: !Sub ${ManagerEmail}
+          Protocol: email
+
   PipelineLogGroup:
     Type: AWS::Logs::LogGroup
     # Properties:
@@ -172,6 +316,12 @@ Resources:
       DefinitionUri: ../state-machines/SubmitForestCoverModel.asl.json
       DefinitionSubstitutions:
         FunctionRegisterModelName: !Ref FunctionRegisterModel
+        FunctionRequestApprovalName: !Ref FunctionRequestApproval
+        ManagerEmail: !Ref ManagerEmail
+        # TODO: Link URIs to stage name and resource paths!
+        ApprovalUri: !Sub 'https://${ProjectApi}.execute-api.${AWS::Region}.amazonaws.com/states/respond?action=Approved'
+        RejectionUri: !Sub 'https://${ProjectApi}.execute-api.${AWS::Region}.amazonaws.com/states/respond?action=Rejected'
+        EmailTopic: !Ref ApprovalEmailTopic
       Logging:
         Destinations:
           - CloudWatchLogsLogGroup: 
