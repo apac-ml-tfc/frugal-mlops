@@ -422,6 +422,20 @@ Resources:
       Layers:
         - !Ref CommonCodeLayer
 
+  FunctionCheckEndpointStatus:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub '${ProjectId}-FunctionCheckEndpointStatus'
+      Description: Check status of an endpoint by name for challenger deployment
+      Handler: main.handler
+      MemorySize: 256
+      Runtime: python3.8
+      Role: !GetAtt LambdaAdminRole.Arn
+      Timeout: 90
+      CodeUri: ../functions/check-endpoint-status/
+      Layers:
+        - !Ref CommonCodeLayer
+
   ApprovalEmailTopic:
     # Actually just a backup in case we're not able to use SES (see FunctionRequestApproval code)
     Type: AWS::SNS::Topic
@@ -443,6 +457,7 @@ Resources:
       Name: !Sub '${ProjectId}-PipelineMachine'
       DefinitionUri: ../state-machines/SubmitForestCoverModel.asl.json
       DefinitionSubstitutions:
+        FunctionCheckEndpointStatusName: !Ref FunctionCheckEndpointStatus
         FunctionRegisterModelName: !Ref FunctionRegisterModel
         FunctionRequestApprovalName: !Ref FunctionRequestApproval
         ManagerEmail: !Ref ManagerEmail

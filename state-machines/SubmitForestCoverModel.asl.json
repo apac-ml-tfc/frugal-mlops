@@ -75,7 +75,7 @@
         {
           "Variable": "$.Approval.Status",
           "StringEquals": "Approved",
-          "Next": "Canary Deploy"
+          "Next": "Check Endpoint Status"
         },
         {
           "Variable": "$.Approval.Status",
@@ -89,6 +89,42 @@
       "Type": "Fail",
       "Cause": "Rejection link clicked",
       "Error": "Rejected"
+    },
+    "Check Endpoint Status": {
+      "Comment": "Check whether the endpoint is new or existing and stable",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${FunctionCheckEndpointStatusName}",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.EndpointStatus",
+      "Next": "Endpoint Status"
+    },
+    "Endpoint Status": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.EndpointStatus.Payload.Status",
+          "StringEquals": "New",
+          "Next": "Scale"
+        },
+        {
+          "Variable": "$.EndpointStatus.Payload.Status",
+          "StringEquals": "Testing",
+          "Next": "Endpoint Busy"
+        },
+        {
+          "Variable": "$.EndpointStatus.Payload.Status",
+          "StringEquals": "Stable",
+          "Next": "Canary Deploy"
+        }
+      ]
+    },
+    "Endpoint Busy": {
+      "Type": "Fail",
+      "Cause": "Endpoint already testing multiple production variants: Wait to stabilize to start another test",
+      "Error": "EndpointBusy"
     },
     "Canary Deploy": {
       "Comment": "TODO: Low-weight deployment to endpoint",
