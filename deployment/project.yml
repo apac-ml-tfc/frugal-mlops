@@ -254,6 +254,7 @@ Resources:
       Path: /
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
+        - 'arn:aws:iam::aws:policy/AmazonSageMakerFullAccess'
         - !Ref StepFunctionsXRayAccessPolicy
         - !Ref CloudWatchLogsDeliveryFullAccessPolicy
 
@@ -449,6 +450,8 @@ Resources:
         ApprovalUri: !Sub 'https://${ProjectApi}.execute-api.${AWS::Region}.amazonaws.com/states/respond?action=Approved'
         RejectionUri: !Sub 'https://${ProjectApi}.execute-api.${AWS::Region}.amazonaws.com/states/respond?action=Rejected'
         EmailTopic: !Ref ApprovalEmailTopic
+        ArtifactsBucket: !Ref ArtifactsBucket
+        SourceBucket: !Ref SourceBucket
       Logging:
         Destinations:
           - CloudWatchLogsLogGroup: 

@@ -64,8 +64,17 @@ def handler(event, context):
     bucket.upload_fileobj(io.BytesIO(json.dumps(event).encode("utf-8")), f"{folder}/request.json")
 
     # Copy the artifacts from sandbox to project
-    modeltar_bucket_name, modeltar_key = bucket_and_key_from_s3_uri(
+    # (Note training job output model.tar.gz might differ from registered model object model.tar.gz because
+    # of additional code/ folder... We'll store both but use the latter for our model.)
+    trainmodeltar_bucket_name, trainmodeltar_key = bucket_and_key_from_s3_uri(
         event["TrainingJob"]["ModelArtifacts"]["S3ModelArtifacts"]
+    )
+    bucket.copy(
+        { "Bucket": trainmodeltar_bucket_name, "Key": trainmodeltar_key },
+        f"{folder}/model-train.tar.gz"
+    )
+    modeltar_bucket_name, modeltar_key = bucket_and_key_from_s3_uri(
+        event["Model"]["PrimaryContainer"]["ModelDataUrl"]
     )
     bucket.copy(
         { "Bucket": modeltar_bucket_name, "Key": modeltar_key },
@@ -90,7 +99,7 @@ def handler(event, context):
             event["Model"]["PrimaryContainer"]["Environment"]["SAGEMAKER_SUBMIT_DIRECTORY"]
         )
         bucket.copy(
-            { "Bucket": traintar_bucket_name, "Key": traintar_key },
+            { "Bucket": inftar_bucket_name, "Key": inftar_key },
             f"{folder}/inference.tar.gz"
         )
         target_inftar_uri = f"s3://{bucket_name}/{folder}/inference.tar.gz"
@@ -133,6 +142,6 @@ def handler(event, context):
         #}
     )
     return {
-        'statusCode': 200,
-        'body': json.dumps(create_model_response["ModelArn"])
+        "ModelArn": create_model_response["ModelArn"],
+        "ModelName": target_model_name,
     }

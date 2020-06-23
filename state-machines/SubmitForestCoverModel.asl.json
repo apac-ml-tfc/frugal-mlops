@@ -10,12 +10,44 @@
         "FunctionName": "${FunctionRegisterModelName}",
         "Payload.$": "$"
       },
+      "ResultPath": "$.ModelRegistration",
       "Next": "Test Transform"
     },
     "Test Transform": {
-      "Comment": "TODO: Replace me with a batch transform operation",
-      "Type": "Wait",
-      "Seconds": 5,
+      "Comment": "TODO: Add ExperimentConfig, Tags, Parameterized infra etc",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:createTransformJob.sync",
+      "Parameters": {
+        "BatchStrategy": "MultiRecord",
+        "DataProcessing": {
+          "InputFilter": "$[:-2]",
+          "JoinSource": "Input"
+        },
+        "MaxPayloadInMB": 3,
+        "ModelName.$": "$.ModelRegistration.Payload.ModelName",
+        "TransformInput": {
+          "CompressionType": "None",
+          "ContentType": "text/csv",
+          "DataSource": {
+            "S3DataSource": {
+              "S3DataType": "S3Prefix",
+              "S3Uri": "s3://${SourceBucket}/test"
+            }
+          },
+          "SplitType": "Line"
+        },
+        "TransformJobName.$": "$.ModelRegistration.Payload.ModelName",
+        "TransformOutput": {
+          "Accept": "text/csv",
+          "AssembleWith": "Line",
+          "S3OutputPath": "s3://${ArtifactsBucket}/test-results"
+        },
+        "TransformResources": {
+          "InstanceCount": 1,
+          "InstanceType": "ml.p3.2xlarge"
+        }
+      },
+      "ResultPath": "$.TestTransform",
       "Next": "Deployment Approval"
     },
     "Deployment Approval": {
