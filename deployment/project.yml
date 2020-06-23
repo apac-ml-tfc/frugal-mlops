@@ -23,20 +23,52 @@ Resources:
       RepositoryName: !Sub '${ProjectId}'
       RepositoryDescription: !Sub '${ProjectId} data science project repository'
 
+  CodeCommitRepositoryParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: ID of the project CodeCommit repository
+      Name: !Sub '/${ProjectId}-Project/CodeCommit'
+      Type: String
+      Value: !Ref CodeCommitRepository
+
   SourceBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub '${ProjectId}-source'
+
+  SourceBucketParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: ID of the project data source bucket
+      Name: !Sub '/${ProjectId}-Project/SourceBucket'
+      Type: String
+      Value: !Ref SourceBucket
 
   ArtifactsBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub '${ProjectId}-artifacts'
 
+  ArtifactsBucketParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: ID of the project artifacts bucket
+      Name: !Sub '/${ProjectId}-Project/ArtifactsBucket'
+      Type: String
+      Value: !Ref ArtifactsBucket
+
   LiveMonitoringBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub '${ProjectId}-monitoring'
+
+  LiveMonitoringBucketParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: ID of the project monitoring bucket
+      Name: !Sub '/${ProjectId}-Project/MonitoringBucket'
+      Type: String
+      Value: !Ref LiveMonitoringBucket
 
 
 ##########  PERMISSIONS  ##########
@@ -74,6 +106,101 @@ Resources:
               - 'sts:AssumeRole'
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/AdministratorAccess'
+
+  ProjectBucketsFullAccessPolicy:
+    # (As created by default in StepFunctions console)
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: !Sub '${ProjectId}-ProjectS3FullAccess'
+      Path: !Sub '/${ProjectId}/'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 's3:GetObject'
+              - 's3:PutObject'
+              - 's3:DeleteObject'
+              - 's3:ListBucket'
+            Resource:
+              - !GetAtt SourceBucket.Arn
+              - !Sub '${SourceBucket.Arn}/*'
+              - !GetAtt ArtifactsBucket.Arn
+              - !Sub '${ArtifactsBucket.Arn}/*'
+              - !GetAtt LiveMonitoringBucket.Arn
+              - !Sub '${LiveMonitoringBucket.Arn}/*'
+
+  ProjectSudoRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub '${ProjectId}-ProjectSudoRole'
+      Path: !Sub '/${ProjectId}/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+          - Effect: Allow
+            Principal:
+              AWS: !GetAtt DataScienceRole.Arn
+            Action:
+              - 'sts:AssumeRole'
+          - Effect: Allow
+            Principal:
+              # TEMP: For development under constant SMStudio role:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:role/AmazonSageMaker-PowerRole'
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AdministratorAccess'
+        - !Ref ProjectBucketsFullAccessPolicy
+
+  ProjectSudoRoleParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: ARN of the project's 'sudo' role
+      Name: !Sub '/${ProjectId}-Project/SudoRole'
+      Type: String
+      Value: !GetAtt ProjectSudoRole.Arn
+
+
+  AllowAssumeProjectSudoPolicy:
+    # Note identities must also be added to the trust relationship of the role!
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: !Sub '${ProjectId}-AllowAssumeProjectSudoRole'
+      Path: !Sub '/${ProjectId}/'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'sts:AssumeRole'
+            # A kinda hacky/simplified way to avoid circular dependency:
+            Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectId}/${ProjectId}-ProjectSudoRole'
+            #Resource: !GetAtt ProjectSudoRole.Arn
+
+  DataScienceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub '${ProjectId}-DataScienceRole'
+      Path: !Sub '/${ProjectId}/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AdministratorAccess'
+        - !Ref AllowAssumeProjectSudoPolicy
 
   StepFunctionsXRayAccessPolicy:
     # (As created by default in StepFunctions console)
@@ -333,3 +460,11 @@ Resources:
       # Tags:
       #   - Key: ...
       #     Value: ...
+
+  PipelineParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: ARN of the project's model submission pipeline
+      Name: !Sub '/${ProjectId}-Project/PipelineStateMachine'
+      Type: String
+      Value: !Ref PipelineStateMachine

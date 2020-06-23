@@ -34,18 +34,19 @@
           "TimeoutDescription": "one week"
         }
       },
+      "ResultPath": "$.Approval",
       "Next": "Approval Outcome"
     },
     "Approval Outcome": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.Status",
+          "Variable": "$.Approval.Status",
           "StringEquals": "Approved",
           "Next": "Canary Deploy"
         },
         {
-          "Variable": "$.Status",
+          "Variable": "$.Approval.Status",
           "StringEquals": "Rejected",
           "Next": "Rejected"
         }
