@@ -68,3 +68,5 @@ def wait(
         print(msg, end="")
         time.sleep(spinner_secs)
         t += spinner_secs
+    print("")
+    return status
