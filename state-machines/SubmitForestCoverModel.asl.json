@@ -75,7 +75,7 @@
         {
           "Variable": "$.Approval.Status",
           "StringEquals": "Approved",
-          "Next": "Check Endpoint Status"
+          "Next": "Prepare Deployment Configs"
         },
         {
           "Variable": "$.Approval.Status",
@@ -90,12 +90,12 @@
       "Cause": "Rejection link clicked",
       "Error": "Rejected"
     },
-    "Check Endpoint Status": {
-      "Comment": "Check whether the endpoint is new or existing and stable",
+    "Prepare Deployment Configs": {
+      "Comment": "Check current endpoint status and prepare configurations for deployment",
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
-        "FunctionName": "${FunctionCheckEndpointStatusName}",
+        "FunctionName": "${FunctionPrepareDeploymentConfigsName}",
         "Payload.$": "$"
       },
       "ResultPath": "$.EndpointStatus",
@@ -107,7 +107,7 @@
         {
           "Variable": "$.EndpointStatus.Payload.Status",
           "StringEquals": "New",
-          "Next": "Scale"
+          "Next": "Create Endpoint"
         },
         {
           "Variable": "$.EndpointStatus.Payload.Status",
@@ -116,7 +116,7 @@
         },
         {
           "Variable": "$.EndpointStatus.Payload.Status",
-          "StringEquals": "Stable",
+          "StringEquals": "Ready",
           "Next": "Canary Deploy"
         }
       ]
@@ -126,21 +126,44 @@
       "Cause": "Endpoint already testing multiple production variants: Wait to stabilize to start another test",
       "Error": "EndpointBusy"
     },
+    "Create Endpoint": {
+      "Comment": "TODO: Add ExperimentConfig, Tags, Parameterized infra etc",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:createEndpoint",
+      "Parameters": {
+        "EndpointName.$": "$.EndpointName",
+        "EndpointConfigName.$": "$.EndpointStatus.Payload.TargetEndpointConfig.Name",
+        "Tags": [
+          { "Key": "Arf", "Value": "Barf" }
+        ]
+      },
+      "End": true
+    },
     "Canary Deploy": {
-      "Comment": "TODO: Low-weight deployment to endpoint",
-      "Type": "Wait",
-      "Seconds": 5,
+      "Comment": "TODO: Add ExperimentConfig, Tags, Parameterized infra etc",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:updateEndpoint",
+      "Parameters": {
+        "EndpointName.$": "$.EndpointName",
+        "EndpointConfigName.$": "$.EndpointStatus.Payload.CanaryEndpointConfig.Name"
+      },
+      "ResultPath": "$.CanaryDeployment",
       "Next": "Monitor"
     },
     "Monitor": {
-      "Comment": "TODO: Monitor for errors",
+      "Comment": "TODO: Monitor for errors. Note 10mins as create/update ops are not synchronous",
       "Type": "Wait",
-      "Seconds": 5,
+      "Seconds": 600,
       "Next": "Scale"
     },
     "Scale": {
       "Comment": "TODO: Shift traffic to new model",
-      "Type": "Pass",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:updateEndpoint",
+      "Parameters": {
+        "EndpointName.$": "$.EndpointName",
+        "EndpointConfigName.$": "$.EndpointStatus.Payload.TargetEndpointConfig.Name"
+      },
       "End": true
     }
   }

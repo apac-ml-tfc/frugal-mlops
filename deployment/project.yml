@@ -411,7 +411,7 @@ Resources:
   FunctionRequestApproval:
     Type: 'AWS::Serverless::Function'
     Properties:
-      FunctionName: !Sub '${ProjectId}-FunctionRequestApproval'
+      FunctionName: !Sub '${ProjectId}-RequestApproval'
       Description: Send approval request emails for queued models
       Handler: main.handler
       MemorySize: 256
@@ -422,17 +422,20 @@ Resources:
       Layers:
         - !Ref CommonCodeLayer
 
-  FunctionCheckEndpointStatus:
+  FunctionPrepareDeploymentConfigs:
     Type: 'AWS::Serverless::Function'
     Properties:
-      FunctionName: !Sub '${ProjectId}-FunctionCheckEndpointStatus'
-      Description: Check status of an endpoint by name for challenger deployment
+      FunctionName: !Sub '${ProjectId}-PrepareDeploymentConfigs'
+      Description: Check current status of an endpoint and prepare configurations for deployment
       Handler: main.handler
       MemorySize: 256
       Runtime: python3.8
       Role: !GetAtt LambdaAdminRole.Arn
       Timeout: 90
-      CodeUri: ../functions/check-endpoint-status/
+      Environment:
+        Variables:
+          MONITORING_BUCKET: !Ref LiveMonitoringBucket
+      CodeUri: ../functions/prepare-deployment-configs/
       Layers:
         - !Ref CommonCodeLayer
 
@@ -457,7 +460,7 @@ Resources:
       Name: !Sub '${ProjectId}-PipelineMachine'
       DefinitionUri: ../state-machines/SubmitForestCoverModel.asl.json
       DefinitionSubstitutions:
-        FunctionCheckEndpointStatusName: !Ref FunctionCheckEndpointStatus
+        FunctionPrepareDeploymentConfigsName: !Ref FunctionPrepareDeploymentConfigs
         FunctionRegisterModelName: !Ref FunctionRegisterModel
         FunctionRequestApprovalName: !Ref FunctionRequestApproval
         ManagerEmail: !Ref ManagerEmail
