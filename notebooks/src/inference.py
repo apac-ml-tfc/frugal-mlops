@@ -6,6 +6,8 @@ import logging
 import os
 import pickle
 
+# External Dependencies:
+import torch
 
 logger = logging.getLogger()
 
@@ -25,6 +27,12 @@ def predict_fn(input_data, model):
     # np.issubdtype(..., np.number) just yields "TypeError: data type not understood" :-(
     # Watch out for:
     # TypeError: can't convert np.ndarray of type numpy.bytes_.
+
+    is_batch_request = len(input_data.shape) >= 2
+    if not is_batch_request:
+        # PyTorch-TabNet complains about 1D input (i.e. single-record inference):
+        input_data = input_data.unsqueeze(0)
+
     if callable(getattr(model, "predict_proba", None)):
         logger.info(
             "Predicting with probabilities on input_data of shape={}, dtype={}".format(
@@ -32,9 +40,12 @@ def predict_fn(input_data, model):
                 input_data.dtype,
             )
         )
-        return model.predict_proba(input_data)
+        result = model.predict_proba(input_data)
     else:
         logger.info(
             f"Predicting scores only on input_data of shape={input_data.shape}, dtype={input_data.dtype}"
         )
-        return model.predict(input_data)
+        result = model.predict(input_data)
+
+    # If we expanded out a single-record request, contract the result back up to single-record:
+    return result if is_batch_request else result[0]
