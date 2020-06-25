@@ -65,7 +65,8 @@ def handler(event, context):
     data_capture_config = {
         "EnableCapture": True,
         "InitialSamplingPercentage": 50, # TODO: Parameterize & evolve?
-        "DestinationS3Uri": f"s3://{monitoring_bucket}/{endpoint_name}",
+        # A subfolder for endpoint name will automatically get created:
+        "DestinationS3Uri": f"s3://{monitoring_bucket}/capture", 
         "CaptureOptions": [
             { "CaptureMode": "Input" },
             { "CaptureMode": "Output" },
