@@ -47,5 +47,10 @@ def predict_fn(input_data, model):
         )
         result = model.predict(input_data)
 
-    # If we expanded out a single-record request, contract the result back up to single-record:
-    return result if is_batch_request else result[0]
+    # Normally if we wanted to offer a mixed single/multi-record request API, we'd probably check at this
+    # point and return a single result rather than a nested array, if the request was single:
+    # return result if is_batch_request else result[0]
+    #
+    # ...But this would be rendered as Score0\nScore1\nScore2 by the default CSV serializer, rather than
+    # Score0,Score1,Score2 - and the default Model Monitor processor is fussy about CSV formatting:
+    return result
