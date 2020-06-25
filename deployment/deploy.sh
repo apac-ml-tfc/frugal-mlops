@@ -51,7 +51,7 @@ sam package \
     --profile $AWSPROFILE
 
 echo "Copying final CloudFormation template to S3..."
-aws s3 cp $PACKAGEFILE "s3://${STAGINGS3}/package.yaml"
+aws s3 cp $PACKAGEFILE "s3://${STAGINGS3}/package.yaml" --profile $AWSPROFILE
 
 echo "Running SAM deploy..."
 sam deploy \

@@ -13,6 +13,9 @@ Parameters:
     Type: String
     AllowedPattern: "^[\\x20-\\x45]?[\\w-\\+]+(\\.[\\w]+)*@[\\w-]+(\\.[\\w]+)*(\\.[a-z]{2,})$"
     ConstraintDescription: Must be a valid email address.
+  BaseSageMakerRoleName:
+    Description: Name of an (existing) SageMaker execution role in your account which will be granted access to the project sudo role.
+    Type: String
 Resources:
 
 
@@ -152,7 +155,7 @@ Resources:
           - Effect: Allow
             Principal:
               # TEMP: For development under constant SMStudio role:
-              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:role/AmazonSageMaker-PowerRole'
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${BaseSageMakerRoleName}'
             Action:
               - 'sts:AssumeRole'
       ManagedPolicyArns:
