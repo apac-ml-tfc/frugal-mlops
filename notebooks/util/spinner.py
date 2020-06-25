@@ -1,8 +1,10 @@
 # Python Built-Ins:
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+import signal
 import time
 from typing import Any, Callable, Optional
+import warnings
 
 
 def wait(
@@ -70,3 +72,42 @@ def wait(
         t += spinner_secs
     print("")
     return status
+
+
+def notebook_safe_tqdm_loop(tqdm_iterator, fn):
+    """Construct a tqdm progress bar-decorated for loop safe for Jupyter(Lab) notebooks
+
+    Erroring out of a tqdm-decorated for loop (e.g. due to cell interrupt or an exception) without closing
+    the tqdm context will mess up future calls and even accumulate (every open context causes an additional
+    newline to be output between all pbar updates).
+
+    This function constructs a safe context to execute fn against each object in the iterator.
+
+    Parameters
+    ----------
+    tqdm_iterator : Iterable
+        A tqdm-decorated iterator, e.g. tqdm.tqdm(range(10))
+    fn : Callable[Any, Any]
+        A function to call sequentially with each object in the iterator
+    """
+    original_sigint_handler = signal.getsignal(signal.SIGINT)
+
+    def signal_handler(signal, frame):
+        try:
+            tqdm_iterator.close()
+        except:
+            warnings.warn("notebook_safe_tqdm_loop couldn't close tqdm_iterator context")
+        return original_sigint_handler(signal, frame)
+
+    try:
+        signal.signal(signal.SIGINT, signal_handler)
+        for obj in tqdm_iterator:
+            result = fn(obj)
+        return result
+    except Exception as e:
+        # For a non-signal exception:
+        iterator.close()
+        raise e
+    finally:
+        # Restore original SIGINT handler:
+        signal.signal(signal.SIGINT, original_sigint_handler)
