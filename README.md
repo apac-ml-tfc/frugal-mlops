@@ -20,6 +20,16 @@ These differences and an aim towards [frugality](https://en.wiktionary.org/wiki/
 
 ## Getting Started
 
-Click the button below to launch the solution stack in **us-east-1** (N. Virginia):
+This repository only templatizes **part** of the required setup: the **ML project stack**.
+
+First you'll need to:
+
+- [Set up SageMaker Studio](https://docs.aws.amazon.com/sagemaker/latest/dg/gs-studio-onboard.html) and make a note of your user's *Execution Role*. Note that if you're following this lab along in **AWS Event Engine**, you'll need to onboard with IAM - not SSO.
+- (Unless you'd like to [use the default bucket](https://sagemaker.readthedocs.io/en/stable/api/utility/session.html#sagemaker.session.Session.default_bucket)), create an S3 bucket that your *SageMaker Execution Role* has full access to: This will be your sandbox area.
+- Open SageMaker Studio, start a "System Terminal" from the Launcher page, and `git clone https://github.com/apac-ml-tfc/frugal-mlops`
+
+Click the button below to launch the **ML project stack** in **us-east-1** (N. Virginia):
 
 [![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://us-east-1.console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=mlops&templateURL=https://public-lunar-lander-apac-us-east-1.s3.amazonaws.com/package.yaml)
+
+Once your CloudFormation stack and SageMaker Studio environment are set up, you're ready to follow through the notebooks in the [/notebooks](notebooks) folder.
