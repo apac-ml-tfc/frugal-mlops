@@ -66,7 +66,13 @@ def handler(event, context):
         "EnableCapture": True,
         "InitialSamplingPercentage": 50, # TODO: Parameterize & evolve?
         # A subfolder for endpoint name will automatically get created:
-        "DestinationS3Uri": f"s3://{monitoring_bucket}/capture", 
+        "DestinationS3Uri": f"s3://{monitoring_bucket}/capture",
+        "CaptureContentTypeHeader": {
+            # This tells SageMaker what Content-Type headers to interpret as CSV and JSON for data capture
+            # purposes (otherwise they'll be serialized base64 by default)...
+            "CsvContentTypes": [ "text/csv" ],
+            "JsonContentTypes": [ "application/json" ],
+        },
         "CaptureOptions": [
             { "CaptureMode": "Input" },
             { "CaptureMode": "Output" },
