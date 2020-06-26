@@ -36,8 +36,6 @@ Resources:
 
   SourceBucket:
     Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${ProjectId}-source'
 
   SourceBucketParam:
     Type: 'AWS::SSM::Parameter'
@@ -49,8 +47,6 @@ Resources:
 
   ArtifactsBucket:
     Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${ProjectId}-artifacts'
 
   ArtifactsBucketParam:
     Type: 'AWS::SSM::Parameter'
@@ -62,8 +58,6 @@ Resources:
 
   LiveMonitoringBucket:
     Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${ProjectId}-monitoring'
 
   LiveMonitoringBucketParam:
     Type: 'AWS::SSM::Parameter'
