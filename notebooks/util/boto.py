@@ -31,3 +31,9 @@ def assumed_role_session(role_arn: str, base_session: botocore.session.Session =
     botocore_session = botocore.session.Session()
     botocore_session._credentials = creds
     return boto3.Session(botocore_session = botocore_session)
+
+def s3uri_to_bucket_and_key(s3uri: str):
+    if not s3uri.lower().startswith("s3://"):
+        return ValueError(f"s3uri must start with s3:// Got: {s3uri}")
+    bucket, _, key = s3uri[len("s3://"):].partition("/")
+    return bucket, key
