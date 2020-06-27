@@ -21,7 +21,7 @@ import boto3
 
 # Local Dependencies:
 from .uid import append_timestamp
-from . import spinner
+from . import progress
 
 logger = logging.getLogger("project")
 
@@ -126,16 +126,7 @@ def submit_model(data, session=None, wait=False):
             return False
         else:
             raise ValueError(f"Stopped with non-success status {statstr}")
-    return spinner.wait(
-        lambda: submission_status(submission),
-        is_registered,
-        lambda s: s["status"],
-        poll_secs = 5
+    return progress.sfn_polling_spinner(
+        submission["executionArn"],
+        poll_secs = 5,
     )
-
-# TODO: Consider using history API instead, to allow interrogation of current state
-# https://stackoverflow.com/questions/50929214/how-to-retrieve-the-current-state-of-a-running-step-functions-in-aws
-def submission_status(submission):
-    """Check the status of an ML model submission (== a Step Function execution)"""
-    execution_arn = submission if isinstance(submission, str) else submission["executionArn"]
-    return sfn.describe_execution(executionArn=execution_arn)
