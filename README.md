@@ -30,6 +30,6 @@ First you'll need to:
 
 Click the button below to launch the **ML project stack** in **us-east-1** (N. Virginia):
 
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://us-east-1.console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=mlops&templateURL=https://public-lunar-lander-apac-us-east-1.s3.amazonaws.com/package.yaml)
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://us-east-1.console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=frugalmlops&templateURL=https://public-frugal-mlops-us-east-1.s3.amazonaws.com/package.yaml)
 
 Once your CloudFormation stack and SageMaker Studio environment are set up, you're ready to follow through the notebooks in the [/notebooks](notebooks) folder.
