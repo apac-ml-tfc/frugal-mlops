@@ -1,14 +1,14 @@
 # Python Built-Ins:
 from datetime import datetime
-from dateutil.relativedelta import relativedelta
 import re
 import signal
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 import warnings
 
 # External Dependencies:
 import boto3
+from dateutil.relativedelta import relativedelta  # For nice display purposes
 
 
 sfn = boto3.client("stepfunctions")
@@ -30,8 +30,9 @@ def polling_spinner(
     fn_poll_result: Callable[[], Any],
     fn_is_finished: Callable[[Any], bool],
     fn_stringify_result: Optional[Callable[[Any], str]]=None,
-    spinner_secs: float=0.4,
-    poll_secs: float=30
+    spinner_secs: float=.5,  # Picking a divisor of 1s produces nicer-looking updates, since resolution is 1s
+    poll_secs: float=30,
+    timeout_secs: Union[float, None]=None,
 ):
     """Polling-wait with loading spinner and elapsed time indicator.
 
@@ -55,40 +56,46 @@ def polling_spinner(
         Time to sleep between check cycles
     poll_secs : Optional
         Minimum elapsed time since last poll after which next check cycle will call fn_poll_result
+    timeout_secs : Optional
+        Number of seconds after which to exit the wait raising TimeoutError
     """
     SPINNER_STATES = ("/", "-", "\\", "|")
     status = fn_poll_result()
-    status_t0 = datetime.now().replace(microsecond=0)
+    overall_t0 = datetime.now().replace(microsecond=0)
+    status_t0 = overall_t0
+    poll_t0 = overall_t0
     status_str = fn_stringify_result(status) if fn_stringify_result else str(status)
-    t = 0
     i = 0
     maxlen = 0
     print(f"Initial status: {status_str}")
     while not fn_is_finished(status):
-        if t >= poll_secs:
+        t = datetime.now()
+        if timeout_secs is not None and (t - overall_t0).total_seconds() >= timeout_secs:
+            raise TimeoutError("Maximum wait time exceeded: timeout_secs={}, {}".format(
+                timeout_secs,
+                relativedelta(seconds=timeout_secs)
+            ))
+        elif (t - poll_t0).total_seconds() >= poll_secs:
             newstatus = fn_poll_result()
+            poll_t0 = t
             newstatus_str = fn_stringify_result(newstatus) if fn_stringify_result else str(newstatus)
-            t = t - poll_secs
             if status_str == newstatus_str:
                 print("\r", end="")
             else:
                 print("\n", end="")
-                status_t0 = datetime.now().replace(microsecond=0)
+                status_t0 = t
             status = newstatus
             status_str = newstatus_str
         else:
             print("\r", end="")
         i = (i + 1) % len(SPINNER_STATES)
-        msg = "{} Status: {} [Since: {}]".format(
-            SPINNER_STATES[i],
-            status_str,
-            relativedelta(datetime.now().replace(microsecond=0), status_t0)
-        )
+        msgdelta = relativedelta(t, status_t0)
+        msgdelta.microseconds = 0  # No need to print out such high resolution
+        msg = f"{SPINNER_STATES[i]} Status: {status_str} [Since: {msgdelta}]"
         maxlen = max(maxlen, len(msg))
         msg = msg.ljust(maxlen)
         print(msg, end="")
         time.sleep(spinner_secs)
-        t += spinner_secs
     print("")
     return status
 
