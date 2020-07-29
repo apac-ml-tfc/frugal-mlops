@@ -457,8 +457,8 @@ Resources:
       Name: !Sub '${ProjectId}-PipelineMachine'
       DefinitionUri: ../state-machines/SubmitForestCoverModel.asl.json
       DefinitionSubstitutions:
-        FunctionPrepareDeploymentConfigsName: !Ref FunctionPrepareDeploymentConfigs
-        FunctionRegisterModelName: !Ref FunctionRegisterModel
+        FunctionPrepareDeploymentConfigsArn: !GetAtt FunctionPrepareDeploymentConfigs.Arn
+        FunctionRegisterModelArn: !GetAtt FunctionRegisterModel.Arn
         FunctionRequestApprovalName: !Ref FunctionRequestApproval
         ManagerEmail: !Ref ManagerEmail
         # TODO: Link URIs to stage name and resource paths!

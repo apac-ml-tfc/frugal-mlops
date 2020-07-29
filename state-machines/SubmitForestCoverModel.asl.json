@@ -5,11 +5,7 @@
     "Register Model": {
       "Comment": "Copy the model artifacts into the project bucket and create the API object",
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${FunctionRegisterModelName}",
-        "Payload.$": "$"
-      },
+      "Resource": "${FunctionRegisterModelArn}",
       "ResultPath": "$.ModelRegistration",
       "Next": "Test Transform"
     },
@@ -24,7 +20,7 @@
           "JoinSource": "Input"
         },
         "MaxPayloadInMB": 3,
-        "ModelName.$": "$.ModelRegistration.Payload.ModelName",
+        "ModelName.$": "$.ModelRegistration.ModelName",
         "TransformInput": {
           "CompressionType": "None",
           "ContentType": "text/csv",
@@ -36,7 +32,7 @@
           },
           "SplitType": "Line"
         },
-        "TransformJobName.$": "$.ModelRegistration.Payload.ModelName",
+        "TransformJobName.$": "$.ModelRegistration.ModelName",
         "TransformOutput": {
           "Accept": "text/csv",
           "AssembleWith": "Line",
@@ -93,11 +89,7 @@
     "Prepare Deployment Configs": {
       "Comment": "Check current endpoint status and prepare configurations for deployment",
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${FunctionPrepareDeploymentConfigsName}",
-        "Payload.$": "$"
-      },
+      "Resource": "${FunctionPrepareDeploymentConfigsArn}",
       "ResultPath": "$.EndpointStatus",
       "Next": "Endpoint Status"
     },
@@ -105,17 +97,17 @@
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.EndpointStatus.Payload.Status",
+          "Variable": "$.EndpointStatus.Status",
           "StringEquals": "New",
           "Next": "Create Endpoint"
         },
         {
-          "Variable": "$.EndpointStatus.Payload.Status",
+          "Variable": "$.EndpointStatus.Status",
           "StringEquals": "Testing",
           "Next": "Endpoint Busy"
         },
         {
-          "Variable": "$.EndpointStatus.Payload.Status",
+          "Variable": "$.EndpointStatus.Status",
           "StringEquals": "Ready",
           "Next": "Canary Deploy"
         }
@@ -132,7 +124,7 @@
       "Resource": "arn:aws:states:::sagemaker:createEndpoint",
       "Parameters": {
         "EndpointName.$": "$.EndpointName",
-        "EndpointConfigName.$": "$.EndpointStatus.Payload.TargetEndpointConfig.Name",
+        "EndpointConfigName.$": "$.EndpointStatus.TargetEndpointConfig.Name",
         "Tags": [
           { "Key": "Arf", "Value": "Barf" }
         ]
@@ -145,7 +137,7 @@
       "Resource": "arn:aws:states:::sagemaker:updateEndpoint",
       "Parameters": {
         "EndpointName.$": "$.EndpointName",
-        "EndpointConfigName.$": "$.EndpointStatus.Payload.CanaryEndpointConfig.Name"
+        "EndpointConfigName.$": "$.EndpointStatus.CanaryEndpointConfig.Name"
       },
       "ResultPath": "$.CanaryDeployment",
       "Next": "Monitor"
@@ -162,7 +154,7 @@
       "Resource": "arn:aws:states:::sagemaker:updateEndpoint",
       "Parameters": {
         "EndpointName.$": "$.EndpointName",
-        "EndpointConfigName.$": "$.EndpointStatus.Payload.TargetEndpointConfig.Name"
+        "EndpointConfigName.$": "$.EndpointStatus.TargetEndpointConfig.Name"
       },
       "End": true
     }
