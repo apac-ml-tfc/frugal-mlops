@@ -444,6 +444,20 @@ Resources:
         - Endpoint: !Sub ${ManagerEmail}
           Protocol: email
 
+  FunctionIsEndpointUpdated:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub '${ProjectId}-IsEndpointUpdated'
+      Description: Check whether SageMaker endpoint is in target state
+      Handler: main.handler
+      MemorySize: 128
+      Runtime: python3.8
+      Role: !GetAtt LambdaAdminRole.Arn
+      Timeout: 30
+      CodeUri: ../functions/is-endpoint-updated/
+      Layers:
+        - !Ref CommonCodeLayer
+
   PipelineLogGroup:
     Type: AWS::Logs::LogGroup
     # Properties:
@@ -457,6 +471,7 @@ Resources:
       Name: !Sub '${ProjectId}-PipelineMachine'
       DefinitionUri: ../state-machines/SubmitForestCoverModel.asl.json
       DefinitionSubstitutions:
+        FunctionIsEndpointUpdatedArn: !GetAtt FunctionIsEndpointUpdated.Arn
         FunctionPrepareDeploymentConfigsArn: !GetAtt FunctionPrepareDeploymentConfigs.Arn
         FunctionRegisterModelArn: !GetAtt FunctionRegisterModel.Arn
         FunctionRequestApprovalName: !Ref FunctionRequestApproval

@@ -119,7 +119,7 @@
       "Error": "EndpointBusy"
     },
     "Create Endpoint": {
-      "Comment": "TODO: Add ExperimentConfig, Tags, Parameterized infra etc",
+      "Comment": "TODO: Do we want to preserve any of the results?",
       "Type": "Task",
       "Resource": "arn:aws:states:::sagemaker:createEndpoint",
       "Parameters": {
@@ -129,7 +129,8 @@
           { "Key": "Arf", "Value": "Barf" }
         ]
       },
-      "End": true
+      "ResultPath": null,
+      "Next": "WaitForDeployment"
     },
     "Canary Deploy": {
       "Comment": "TODO: Add ExperimentConfig, Tags, Parameterized infra etc",
@@ -143,9 +144,21 @@
       "Next": "Monitor"
     },
     "Monitor": {
-      "Comment": "TODO: Monitor for errors. Note 10mins as create/update ops are not synchronous",
-      "Type": "Wait",
-      "Seconds": 600,
+      "Comment": "TODO: Monitor for errors.",
+      "Type": "Task",
+      "Resource": "${FunctionIsEndpointUpdatedArn}",
+      "Parameters": {
+        "EndpointName.$": "$.EndpointName"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["EndpointUpdating"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 24,
+          "BackoffRate": 1.0
+        }
+      ],
+      "ResultPath": null,
       "Next": "Scale"
     },
     "Scale": {
@@ -156,6 +169,24 @@
         "EndpointName.$": "$.EndpointName",
         "EndpointConfigName.$": "$.EndpointStatus.TargetEndpointConfig.Name"
       },
+      "ResultPath": null,
+      "Next": "WaitForDeployment"
+    },
+    "WaitForDeployment": {
+      "Comment": "Ensure deployment is complete before exiting",
+      "Type": "Task",
+      "Resource": "${FunctionIsEndpointUpdatedArn}",
+      "Parameters": {
+        "EndpointName.$": "$.EndpointName"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["EndpointUpdating"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 24,
+          "BackoffRate": 1.0
+        }
+      ],
       "End": true
     }
   }
