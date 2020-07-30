@@ -42,10 +42,10 @@ def get_model(args):
         "epsilon": args.epsilon,
         "seed": args.seed,
         "momentum": args.momentum,
-        "lr": args.lr,
         "clip_value": args.clip_value,
         "lambda_sparse": args.lambda_sparse,
         # optimizer_fn unsupported
+        "optimizer_params": dict(lr=args.lr),
         # scheduler_fn unsupported
         # scheduler_params unsupported
         # model_name see below
