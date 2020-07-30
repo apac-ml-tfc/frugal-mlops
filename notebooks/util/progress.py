@@ -222,7 +222,7 @@ def notebook_safe_tqdm_loop(tqdm_iterator, fn):
         return result
     except Exception as e:
         # For a non-signal exception:
-        iterator.close()
+        tqdm_iterator.close()
         raise e
     finally:
         # Restore original SIGINT handler:
