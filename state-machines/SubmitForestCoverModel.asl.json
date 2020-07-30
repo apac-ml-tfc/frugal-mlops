@@ -5,11 +5,7 @@
     "Register Model": {
       "Comment": "Copy the model artifacts into the project bucket and create the API object",
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${FunctionRegisterModelName}",
-        "Payload.$": "$"
-      },
+      "Resource": "${FunctionRegisterModelArn}",
       "ResultPath": "$.ModelRegistration",
       "Next": "Test Transform"
     },
@@ -24,7 +20,7 @@
           "JoinSource": "Input"
         },
         "MaxPayloadInMB": 3,
-        "ModelName.$": "$.ModelRegistration.Payload.ModelName",
+        "ModelName.$": "$.ModelRegistration.ModelName",
         "TransformInput": {
           "CompressionType": "None",
           "ContentType": "text/csv",
@@ -36,7 +32,7 @@
           },
           "SplitType": "Line"
         },
-        "TransformJobName.$": "$.ModelRegistration.Payload.ModelName",
+        "TransformJobName.$": "$.ModelRegistration.ModelName",
         "TransformOutput": {
           "Accept": "text/csv",
           "AssembleWith": "Line",
@@ -93,11 +89,7 @@
     "Prepare Deployment Configs": {
       "Comment": "Check current endpoint status and prepare configurations for deployment",
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${FunctionPrepareDeploymentConfigsName}",
-        "Payload.$": "$"
-      },
+      "Resource": "${FunctionPrepareDeploymentConfigsArn}",
       "ResultPath": "$.EndpointStatus",
       "Next": "Endpoint Status"
     },
@@ -105,17 +97,17 @@
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.EndpointStatus.Payload.Status",
+          "Variable": "$.EndpointStatus.Status",
           "StringEquals": "New",
           "Next": "Create Endpoint"
         },
         {
-          "Variable": "$.EndpointStatus.Payload.Status",
+          "Variable": "$.EndpointStatus.Status",
           "StringEquals": "Testing",
           "Next": "Endpoint Busy"
         },
         {
-          "Variable": "$.EndpointStatus.Payload.Status",
+          "Variable": "$.EndpointStatus.Status",
           "StringEquals": "Ready",
           "Next": "Canary Deploy"
         }
@@ -127,17 +119,18 @@
       "Error": "EndpointBusy"
     },
     "Create Endpoint": {
-      "Comment": "TODO: Add ExperimentConfig, Tags, Parameterized infra etc",
+      "Comment": "TODO: Do we want to preserve any of the results?",
       "Type": "Task",
       "Resource": "arn:aws:states:::sagemaker:createEndpoint",
       "Parameters": {
         "EndpointName.$": "$.EndpointName",
-        "EndpointConfigName.$": "$.EndpointStatus.Payload.TargetEndpointConfig.Name",
+        "EndpointConfigName.$": "$.EndpointStatus.TargetEndpointConfig.Name",
         "Tags": [
           { "Key": "Arf", "Value": "Barf" }
         ]
       },
-      "End": true
+      "ResultPath": null,
+      "Next": "WaitForDeployment"
     },
     "Canary Deploy": {
       "Comment": "TODO: Add ExperimentConfig, Tags, Parameterized infra etc",
@@ -145,15 +138,27 @@
       "Resource": "arn:aws:states:::sagemaker:updateEndpoint",
       "Parameters": {
         "EndpointName.$": "$.EndpointName",
-        "EndpointConfigName.$": "$.EndpointStatus.Payload.CanaryEndpointConfig.Name"
+        "EndpointConfigName.$": "$.EndpointStatus.CanaryEndpointConfig.Name"
       },
       "ResultPath": "$.CanaryDeployment",
       "Next": "Monitor"
     },
     "Monitor": {
-      "Comment": "TODO: Monitor for errors. Note 10mins as create/update ops are not synchronous",
-      "Type": "Wait",
-      "Seconds": 600,
+      "Comment": "TODO: Monitor for errors.",
+      "Type": "Task",
+      "Resource": "${FunctionIsEndpointUpdatedArn}",
+      "Parameters": {
+        "EndpointName.$": "$.EndpointName"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["EndpointUpdating"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 24,
+          "BackoffRate": 1.0
+        }
+      ],
+      "ResultPath": null,
       "Next": "Scale"
     },
     "Scale": {
@@ -162,8 +167,26 @@
       "Resource": "arn:aws:states:::sagemaker:updateEndpoint",
       "Parameters": {
         "EndpointName.$": "$.EndpointName",
-        "EndpointConfigName.$": "$.EndpointStatus.Payload.TargetEndpointConfig.Name"
+        "EndpointConfigName.$": "$.EndpointStatus.TargetEndpointConfig.Name"
       },
+      "ResultPath": null,
+      "Next": "WaitForDeployment"
+    },
+    "WaitForDeployment": {
+      "Comment": "Ensure deployment is complete before exiting",
+      "Type": "Task",
+      "Resource": "${FunctionIsEndpointUpdatedArn}",
+      "Parameters": {
+        "EndpointName.$": "$.EndpointName"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["EndpointUpdating"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 24,
+          "BackoffRate": 1.0
+        }
+      ],
       "End": true
     }
   }

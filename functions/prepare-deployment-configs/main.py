@@ -30,7 +30,7 @@ def handler(event, context):
     logger.info(event)
 
     endpoint_name = event["EndpointName"]
-    target_model_name = event["ModelRegistration"]["Payload"]["ModelName"]
+    target_model_name = event["ModelRegistration"]["ModelName"]
     result = {}
 
     # Check if the endpoint exists at all:
