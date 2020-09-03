@@ -51,6 +51,7 @@ def promote_model_container(container_def, new_data_uri, new_submit_uri=None):
 def handler(event, context):
     print(event)
 
+    training_job_name = event["TrainingJob"]["TrainingJobName"]
     trial_name = event["TrainingJob"]["ExperimentConfig"]["TrialName"]
 
     trial_desc = smclient.describe_trial(TrialName=trial_name)
@@ -134,6 +135,7 @@ def handler(event, context):
             { "Key": "Pipeline-Status", "Value": "New" },
             { "Key": "ExperimentName", "Value": experiment_name },
             { "Key": "TrialName", "Value": trial_name },
+            { "Key": "TrainingJobName", "Value": training_job_name },
         ],
         # TODO: VPC config
         #VpcConfig={ 
