@@ -1,0 +1,132 @@
+# MLOps demonstration environment: Set up SageMaker IAM roles for the base permission set and example user,
+# and define the "Data Science Project" and "Data Scientist Sandbox" products in Service Catalog.
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  DataSciProjectTemplateUrl:
+    Description: URL for compiled CloudFormation template of the 'Data Science Project' SC product.
+    Type: String
+    Default: https://public-frugal-mlops-us-east-1.s3.amazonaws.com/project.yaml
+  DataSciSandboxTemplateUrl:
+    Description: URL for compiled CloudFormation template of the 'Data Scientist Sandbox' SC product.
+    Type: String
+    Default: https://public-frugal-mlops-us-east-1.s3.amazonaws.com/sandbox.yaml
+  # TODO: Is it useful to parameterize these?
+  # BaseSageMakerRoleName:
+  #   Description: Name of a new SageMaker execution role to create for base permissions
+  #   Type: String
+  # ExampleSageMakerUserRoleName:
+  #   Description: Name of a new SageMaker execution role to create for example data science user (group)
+  #   Type: String
+Resources:
+
+##########  IAM Basics  ##########
+  # A baseline access role for generic SageMaker users
+  BaseSageMakerRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      #RoleName: !Ref BaseSageMakerRoleName
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSageMakerFullAccess'
+
+  # An access role for our example SageMaker user (group)
+  ExampleSageMakerUserRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      #RoleName: !Ref ExampleSageMakerUserRoleName
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSageMakerFullAccess'
+
+
+##########  Service Catalog  ##########
+  ServiceCatalogPortfolio:
+    Type: 'AWS::ServiceCatalog::Portfolio'
+    Properties:
+      DisplayName: !Sub '${AWS::StackName}-Portfolio'
+      Description: !Sub 'Demo Service Catalog portfolio for ${AWS::StackName} stack: As seen by users in the business'
+      ProviderName: frugal-mlops
+
+  DataSciProjectSCProduct:
+    Type: 'AWS::ServiceCatalog::CloudFormationProduct'
+    Properties: 
+      Name: !Sub 'Data Science Project (${AWS::StackName})'
+      Description: 'Infrastructure for a machine learning project'
+      Owner: frugal-mlops
+      ProvisioningArtifactParameters: 
+        - Name: v1
+          Description: Initial version
+          Info:
+            LoadTemplateFromURL: !Ref DataSciProjectTemplateUrl
+      SupportDescription: 'Good luck!'
+      SupportUrl: https://github.com/apac-ml-tfc/frugal-mlops
+
+  DataSciProjectSCPortfolioAssoc:
+    Type: 'AWS::ServiceCatalog::PortfolioProductAssociation'
+    Properties: 
+      PortfolioId: !Ref ServiceCatalogPortfolio
+      ProductId: !Ref DataSciProjectSCProduct
+
+  # SC Constraints are not a great user experience for feeding this output through: They cause an error after
+  # the template is provisioned, not a message when the user tries to set the parameters.
+  # DataSciProjectTemplateConstraint:
+  #   Type: 'AWS::ServiceCatalog::LaunchTemplateConstraint'
+  #   Properties:
+  #     Description: A description goes here
+  #     PortfolioId: !Ref ServiceCatalogPortfolio
+  #     ProductId: !Ref DataSciProjectSCProduct
+  #     Rules: !Sub |-
+  #       {
+  #         "BaseSageMakerRoleName": {
+  #           "Assertions": [
+  #             {
+  #               "Assert": { "Fn::Equals": [{ "Ref": "BaseSageMakerRoleName" }, "${BaseSageMakerRole}"] },
+  #               "AssertDescription": "Must use BaseSageMakerRoleName = ${BaseSageMakerRole}"
+  #             }
+  #           ]
+  #         }
+  #       }
+
+  DataSciSandboxSCProduct:
+    Type: 'AWS::ServiceCatalog::CloudFormationProduct'
+    Properties: 
+      Name: !Sub 'Data Scientist Sandbox (${AWS::StackName})'
+      Description: 'Sandbox for a data scientist to on-board to an ML project'
+      Owner: frugal-mlops
+      ProvisioningArtifactParameters: 
+        - Name: v1
+          Description: Initial version
+          Info:
+            LoadTemplateFromURL: !Ref DataSciSandboxTemplateUrl
+      SupportDescription: 'Good luck!'
+      SupportUrl: https://github.com/apac-ml-tfc/frugal-mlops
+
+  DataSciSandboxSCPortfolioAssoc:
+    Type: 'AWS::ServiceCatalog::PortfolioProductAssociation'
+    Properties: 
+      PortfolioId: !Ref ServiceCatalogPortfolio
+      ProductId: !Ref DataSciSandboxSCProduct
+
+Outputs:
+  BaseSageMakerRole:
+    Description: A baseline access role for generic SageMaker users
+    Value: !Ref BaseSageMakerRole
+  ExampleSageMakerUserRole:
+    Description: An access role for our example SageMaker user
+    Value: !Ref ExampleSageMakerUserRole

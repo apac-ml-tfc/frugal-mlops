@@ -13,13 +13,11 @@ Parameters:
     Type: String
     AllowedPattern: "^[\\x20-\\x45]?[\\w-\\+]+(\\.[\\w]+)*@[\\w-]+(\\.[\\w]+)*(\\.[a-z]{2,})$"
     ConstraintDescription: Must be a valid email address.
-  BaseSageMakerRoleName:
-    Description: Name of an (existing) SageMaker execution role in your account which will be granted access to the project sudo role.
-    Type: String
 Resources:
 
 
 ##########  REPOSITORIES  ##########
+  # Source code repository (not currently used in the sample notebooks)
   CodeCommitRepository:
     Type: AWS::CodeCommit::Repository
     Properties:
@@ -34,8 +32,15 @@ Resources:
       Type: String
       Value: !Ref CodeCommitRepository
 
+  # Source data bucket (target for modelling)
   SourceBucket:
     Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
 
   SourceBucketParam:
     Type: 'AWS::SSM::Parameter'
@@ -45,8 +50,15 @@ Resources:
       Type: String
       Value: !Ref SourceBucket
 
+  # Model artifacts bucket (trained models, reports, etc)
   ArtifactsBucket:
     Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
 
   ArtifactsBucketParam:
     Type: 'AWS::SSM::Parameter'
@@ -56,8 +68,15 @@ Resources:
       Type: String
       Value: !Ref ArtifactsBucket
 
+  # Live monitoring bucket (endpoint data capture, baselines, etc)
   LiveMonitoringBucket:
     Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
 
   LiveMonitoringBucketParam:
     Type: 'AWS::SSM::Parameter'
@@ -69,11 +88,10 @@ Resources:
 
 
 ##########  PERMISSIONS  ##########
-# TODO: Everything very open at the moment to get things working
-  LambdaAdminRole:
+  LambdaRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub '${ProjectId}-LambdaAdminRole'
+      RoleName: !Sub '${ProjectId}-LambdaRole'
       Path: !Sub '/${ProjectId}/'
       AssumeRolePolicyDocument:
         Version: 2012-10-17
@@ -85,12 +103,13 @@ Resources:
             Action:
               - 'sts:AssumeRole'
       ManagedPolicyArns:
+        # TODO: Scope these permissions down
         - 'arn:aws:iam::aws:policy/AdministratorAccess'
 
-  ModelAdminRole:
+  ModelRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub '${ProjectId}-ModelAdminRole'
+      RoleName: !Sub '${ProjectId}-ModelRole'
       Path: !Sub '/${ProjectId}/'
       AssumeRolePolicyDocument:
         Version: 2012-10-17
@@ -102,23 +121,231 @@ Resources:
             Action:
               - 'sts:AssumeRole'
       ManagedPolicyArns:
+        # TODO: Scope these permissions down
         - 'arn:aws:iam::aws:policy/AdministratorAccess'
 
-  ProjectBucketsFullAccessPolicy:
-    # (As created by default in StepFunctions console)
+  # A lot of this is just copied from AmazonSageMakerFullAccess (which we don't currently grant to
+  # ProjectSudoRole, in prep for trying to trim down the access)
+  ProjectReadAccessPolicy:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
-      ManagedPolicyName: !Sub '${ProjectId}-ProjectS3FullAccess'
+      ManagedPolicyName: !Sub '${ProjectId}-ProjectReadAccess'
       Path: !Sub '/${ProjectId}/'
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
+          - Sid: CodeCommitReadAccess
+            Effect: Allow
             Action:
+              - 'codecommit:BatchGet*'
+              - 'codecommit:Describe*'
+              - 'codecommit:Get*'
+              - 'codecommit:GetRepository'
+              - 'codecommit:GitPull'
+              - 'codecommit:List*'
+            Resource:
+              - !GetAtt CodeCommitRepository.Arn
+          # TODO: How should we scope ECR access when may be many-many mapping with projects?
+          # - Sid: ECRAccess
+          #   Effect: Allow
+          #   Action:
+          #     # These actions are restricted in SageMakerFullAccess to:
+          #     # "Resource": "arn:aws:ecr:*:*:repository/*sagemaker*"
+          #     - 'ecr:SetRepositoryPolicy'
+          #     - 'ecr:CompleteLayerUpload'
+          #     - 'ecr:BatchDeleteImage'
+          #     - 'ecr:UploadLayerPart'
+          #     - 'ecr:DeleteRepositoryPolicy'
+          #     - 'ecr:InitiateLayerUpload'
+          #     - 'ecr:DeleteRepository'
+          #     - 'ecr:PutImage'
+          #     # These actions are for all resources in SageMakerFullAccess:
+          #     - 'ecr:BatchCheckLayerAvailability'
+          #     - 'ecr:BatchGetImage'
+          #     - 'ecr:CreateRepository'
+          #     - 'ecr:Describe*'
+          #     - 'ecr:GetAuthorizationToken'
+          #     - 'ecr:GetDownloadUrlForLayer'
+          #     - 'ecr:StartImageScan'
+          #   Resource: '*'
+          - Sid: IAMPassRole
+            Effect: Allow
+            Action: 
+              - 'iam:PassRole'
+            Resource: 'arn:aws:iam::*:role/*'  # TODO: Surely just *this* role?
+            Condition:
+              StringEquals:
+                iam:PassedToService:
+                  - 'sagemaker.amazonaws.com'
+                  - 'glue.amazonaws.com'
+                  - 'robomaker.amazonaws.com'
+                  - 'states.amazonaws.com'
+          - Sid: S3Global
+            Effect: Allow
+            Action:
+              - 's3:ListAllMyBuckets'
+            Resource: '*'
+          - Sid: S3ReadOnlyActions
+            Effect: Allow
+            Action:
+              - 's3:DescribeJob'
+              - 's3:GetAccessPoint*'
+              - 's3:GetAccountPublicAccessBlock'
+              - 's3:GetAnalyticsConfiguration'
+              - 's3:GetBucket*'
+              - 's3:GetEncryptionConfiguration'
+              - 's3:GetInventoryConfiguration'
+              - 's3:GetLifecycleConfiguration'
+              - 's3:GetMetricsConfiguration'
+              - 's3:GetObject*'
+              - 's3:ListBucket*'
+              - 's3:ListBucketVersions'
+            Resource:
+              - !GetAtt SourceBucket.Arn
+              - !Sub '${SourceBucket.Arn}/*'
+              - !GetAtt ArtifactsBucket.Arn
+              - !Sub '${ArtifactsBucket.Arn}/*'
+              - !GetAtt LiveMonitoringBucket.Arn
+              - !Sub '${LiveMonitoringBucket.Arn}/*'
+          - Sid: IAMCreateAutoScalingRole
+            Effect: Allow
+            Action: 'iam:CreateServiceLinkedRole'
+            Resource: 'arn:aws:iam::*:role/aws-service-role/sagemaker.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_SageMakerEndpoint'
+            Condition:
+              StringLike:
+                iam:AWSServiceName: 'sagemaker.application-autoscaling.amazonaws.com'
+          - Sid: AutoScaling
+            Effect: Allow
+            Action:
+              - 'application-autoscaling:DeleteScalingPolicy'
+              - 'application-autoscaling:DeleteScheduledAction'
+              - 'application-autoscaling:DeregisterScalableTarget'
+              - 'application-autoscaling:DescribeScalableTargets'
+              - 'application-autoscaling:DescribeScalingActivities'
+              - 'application-autoscaling:DescribeScalingPolicies'
+              - 'application-autoscaling:DescribeScheduledActions'
+              - 'application-autoscaling:PutScalingPolicy'
+              - 'application-autoscaling:PutScheduledAction'
+              - 'application-autoscaling:RegisterScalableTarget'
+            Resource: '*'  # TODO: Scope Down
+          - Sid: Other
+            Effect: Allow
+            Action:
+              - 'aws-marketplace:ViewSubscriptions'
+              - 'cloudwatch:DeleteAlarms'
+              - 'cloudwatch:DescribeAlarms'
+              - 'cloudwatch:GetMetricData'
+              - 'cloudwatch:GetMetricStatistics'
+              - 'cloudwatch:ListMetrics'
+              - 'cloudwatch:PutMetricAlarm'
+              - 'cloudwatch:PutMetricData'
+              - 'cognito-idp:AdminAddUserToGroup'
+              - 'cognito-idp:AdminCreateUser'
+              - 'cognito-idp:AdminDeleteUser'
+              - 'cognito-idp:AdminDisableUser'
+              - 'cognito-idp:AdminEnableUser'
+              - 'cognito-idp:AdminRemoveUserFromGroup'
+              - 'cognito-idp:CreateGroup'
+              - 'cognito-idp:CreateUserPool'
+              - 'cognito-idp:CreateUserPoolClient'
+              - 'cognito-idp:CreateUserPoolDomain'
+              - 'cognito-idp:DescribeUserPool'
+              - 'cognito-idp:DescribeUserPoolClient'
+              - 'cognito-idp:List*'
+              - 'cognito-idp:UpdateUserPool'
+              - 'cognito-idp:UpdateUserPoolClient'
+              - 'ec2:CreateNetworkInterface'
+              - 'ec2:CreateNetworkInterfacePermission'
+              - 'ec2:CreateVpcEndpoint'
+              - 'ec2:DeleteNetworkInterface'
+              - 'ec2:DeleteNetworkInterfacePermission'
+              - 'ec2:DescribeDhcpOptions'
+              - 'ec2:DescribeNetworkInterfaces'
+              - 'ec2:DescribeRouteTables'
+              - 'ec2:DescribeSecurityGroups'
+              - 'ec2:DescribeSubnets'
+              - 'ec2:DescribeVpcEndpoints'
+              - 'ec2:DescribeVpcs'
+              - 'elastic-inference:Connect'
+              - 'elasticfilesystem:DescribeFileSystems'
+              - 'elasticfilesystem:DescribeMountTargets'
+              - 'fsx:DescribeFileSystems'
+              - 'glue:CreateJob'
+              - 'glue:DeleteJob'
+              - 'glue:GetJob'
+              - 'glue:GetJobRun'
+              - 'glue:GetJobRuns'
+              - 'glue:GetJobs'
+              - 'glue:ResetJobBookmark'
+              - 'glue:StartJobRun'
+              - 'glue:UpdateJob'
+              - 'groundtruthlabeling:*'
+              - 'iam:ListRoles'
+              - 'kms:DescribeKey'
+              - 'kms:ListAliases'
+              - 'lambda:ListFunctions'
+              - 'logs:CreateLogDelivery'
+              - 'logs:CreateLogGroup'
+              - 'logs:CreateLogStream'
+              - 'logs:DeleteLogDelivery'
+              - 'logs:Describe*'
+              - 'logs:GetLogDelivery'
+              - 'logs:GetLogEvents'
+              - 'logs:ListLogDeliveries'
+              - 'logs:PutLogEvents'
+              - 'logs:PutResourcePolicy'
+              - 'logs:UpdateLogDelivery'
+              - 'secretsmanager:ListSecrets'
+              - 'sns:ListTopics'
+            Resource: '*'
+
+  ProjectWriteAccessPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: !Sub '${ProjectId}-ProjectWriteAccess'
+      Path: !Sub '/${ProjectId}/'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CodeCommitAdminAccess
+            Effect: Allow
+            Action:
+              - 'codecommit:*'
+            Resource:
+              - !GetAtt CodeCommitRepository.Arn
+          - Sid: S3ReadOnlyActions
+            Effect: Allow
+            Action:
+              - 's3:DescribeJob'
+              - 's3:GetAccessPoint*'
+              - 's3:GetAccountPublicAccessBlock'
+              - 's3:GetAnalyticsConfiguration'
+              - 's3:GetBucket*'
+              - 's3:GetEncryptionConfiguration'
+              - 's3:GetInventoryConfiguration'
+              - 's3:GetLifecycleConfiguration'
+              - 's3:GetMetricsConfiguration'
+              - 's3:GetObject*'
+              - 's3:ListBucket*'
+              - 's3:ListBucketVersions'
+            Resource:
+              - !GetAtt SourceBucket.Arn
+              - !Sub '${SourceBucket.Arn}/*'
+              - !GetAtt ArtifactsBucket.Arn
+              - !Sub '${ArtifactsBucket.Arn}/*'
+              - !GetAtt LiveMonitoringBucket.Arn
+              - !Sub '${LiveMonitoringBucket.Arn}/*'
+          - Sid: S3WritableActions
+            Effect: Allow
+            Action:
+              - 's3:AbortMultipartUpload'
+              - 's3:DeleteObject*'
               - 's3:GetObject'
+              - 's3:ListMultipartUploadParts'
               - 's3:PutObject'
-              - 's3:DeleteObject'
-              - 's3:ListBucket'
+              - 's3:PutObjectTagging'
+              - 's3:RestoreObject'
+              - 's3:AbortMultipartUpload'
             Resource:
               - !GetAtt SourceBucket.Arn
               - !Sub '${SourceBucket.Arn}/*'
@@ -127,6 +354,7 @@ Resources:
               - !GetAtt LiveMonitoringBucket.Arn
               - !Sub '${LiveMonitoringBucket.Arn}/*'
 
+  # An assumable role for data scientists to perform elevated tasks without always running
   ProjectSudoRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -141,20 +369,9 @@ Resources:
                 - sagemaker.amazonaws.com
             Action:
               - 'sts:AssumeRole'
-          - Effect: Allow
-            Principal:
-              AWS: !GetAtt DataScienceRole.Arn
-            Action:
-              - 'sts:AssumeRole'
-          - Effect: Allow
-            Principal:
-              # TEMP: For development under constant SMStudio role:
-              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${BaseSageMakerRoleName}'
-            Action:
-              - 'sts:AssumeRole'
       ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/AdministratorAccess'
-        - !Ref ProjectBucketsFullAccessPolicy
+        - !Ref ProjectReadAccessPolicy
+        - !Ref ProjectWriteAccessPolicy
 
   ProjectSudoRoleParam:
     Type: 'AWS::SSM::Parameter'
@@ -164,43 +381,8 @@ Resources:
       Type: String
       Value: !GetAtt ProjectSudoRole.Arn
 
-
-  AllowAssumeProjectSudoPolicy:
-    # Note identities must also be added to the trust relationship of the role!
-    Type: 'AWS::IAM::ManagedPolicy'
-    Properties:
-      ManagedPolicyName: !Sub '${ProjectId}-AllowAssumeProjectSudoRole'
-      Path: !Sub '/${ProjectId}/'
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Action:
-              - 'sts:AssumeRole'
-            # A kinda hacky/simplified way to avoid circular dependency:
-            Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectId}/${ProjectId}-ProjectSudoRole'
-            #Resource: !GetAtt ProjectSudoRole.Arn
-
-  DataScienceRole:
-    Type: 'AWS::IAM::Role'
-    Properties:
-      RoleName: !Sub '${ProjectId}-DataScienceRole'
-      Path: !Sub '/${ProjectId}/'
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - sagemaker.amazonaws.com
-            Action:
-              - 'sts:AssumeRole'
-      ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/AdministratorAccess'
-        - !Ref AllowAssumeProjectSudoPolicy
-
+  # Policy for Step Functions to access X-Ray (as created by default in SFn console)
   StepFunctionsXRayAccessPolicy:
-    # (As created by default in StepFunctions console)
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
       ManagedPolicyName: !Sub '${ProjectId}-StepFnXRayAccess'
@@ -216,8 +398,8 @@ Resources:
               - 'xray:GetSamplingTargets'
             Resource: '*'
 
+  # Policy for Step Functions to log to CloudWatch (as created by default in SFn console)
   CloudWatchLogsDeliveryFullAccessPolicy:
-    # (As created by default in StepFunctions console)
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
       ManagedPolicyName: !Sub '${ProjectId}-CWLogsDeliveryFullAccess'
@@ -237,10 +419,10 @@ Resources:
               - 'logs:DescribeLogGroups'
             Resource: '*'
 
-  StepFunctionAdminRole:
+  StepFunctionRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub '${ProjectId}-StepFunctionAdminRole'
+      RoleName: !Sub '${ProjectId}-StepFunctionRole'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -250,6 +432,7 @@ Resources:
             Action: 'sts:AssumeRole'
       Path: /
       ManagedPolicyArns:
+        # TODO: Restrict down Lambda/SageMaker access to targets only
         - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
         - 'arn:aws:iam::aws:policy/AmazonSageMakerFullAccess'
         - !Ref StepFunctionsXRayAccessPolicy
@@ -377,7 +560,7 @@ Resources:
 
 ##########  PIPELINE  ##########
   CommonCodeLayer:
-    Type: AWS::Serverless::LayerVersion
+    Type: 'AWS::Serverless::LayerVersion'
     Properties:
       LayerName: common-utils
       Description: Dependencies for take action code
@@ -394,13 +577,13 @@ Resources:
       Handler: main.handler
       MemorySize: 256
       Runtime: python3.8
-      Role: !GetAtt LambdaAdminRole.Arn
+      Role: !GetAtt LambdaRole.Arn
       Timeout: 30
       Environment:
         Variables:
           PROJECT_ID: !Ref ProjectId
           PROJECT_BUCKET: !Ref ArtifactsBucket
-          PROJECT_MODEL_ROLE_ARN: !GetAtt ModelAdminRole.Arn
+          PROJECT_MODEL_ROLE_ARN: !GetAtt ModelRole.Arn
       CodeUri: ../functions/register-model/
       Layers:
         - !Ref CommonCodeLayer
@@ -413,7 +596,7 @@ Resources:
       Handler: main.handler
       MemorySize: 256
       Runtime: python3.8
-      Role: !GetAtt LambdaAdminRole.Arn
+      Role: !GetAtt LambdaRole.Arn
       Timeout: 90
       CodeUri: ../functions/request-approval/
       Layers:
@@ -427,7 +610,7 @@ Resources:
       Handler: main.handler
       MemorySize: 256
       Runtime: python3.8
-      Role: !GetAtt LambdaAdminRole.Arn
+      Role: !GetAtt LambdaRole.Arn
       Timeout: 90
       Environment:
         Variables:
@@ -438,7 +621,7 @@ Resources:
 
   ApprovalEmailTopic:
     # Actually just a backup in case we're not able to use SES (see FunctionRequestApproval code)
-    Type: AWS::SNS::Topic
+    Type: 'AWS::SNS::Topic'
     Properties:
       Subscription:
         - Endpoint: !Sub ${ManagerEmail}
@@ -452,20 +635,20 @@ Resources:
       Handler: main.handler
       MemorySize: 128
       Runtime: python3.8
-      Role: !GetAtt LambdaAdminRole.Arn
+      Role: !GetAtt LambdaRole.Arn
       Timeout: 30
       CodeUri: ../functions/is-endpoint-updated/
       Layers:
         - !Ref CommonCodeLayer
 
   PipelineLogGroup:
-    Type: AWS::Logs::LogGroup
+    Type: 'AWS::Logs::LogGroup'
     # Properties:
     #   LogGroupName: # Whatevs, the default isn't too bad?
     #   RetentionInDays: # 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653
 
   PipelineStateMachine:
-    Type: AWS::Serverless::StateMachine
+    Type: 'AWS::Serverless::StateMachine'
     Properties:
       # Omitting name gives PipelineStateMachine-[GARBAGE], which might be nice enough for you but might not!
       Name: !Sub '${ProjectId}-PipelineMachine'
@@ -488,7 +671,7 @@ Resources:
               LogGroupArn: !GetAtt PipelineLogGroup.Arn
         IncludeExecutionData: true
         Level: ALL  # or ERROR, FATAL, OFF (default)
-      Role: !GetAtt StepFunctionAdminRole.Arn
+      Role: !GetAtt StepFunctionRole.Arn
       Type: STANDARD
       # Tags:
       #   - Key: ...

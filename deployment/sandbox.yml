@@ -1,0 +1,191 @@
+# CloudFormation template for an individual user's sandbox granting access to a project
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  ProjectId:
+    Description: Used as a prefix for project resources.  Can be up to 12 characters, lowercase letters (a-z) only.
+    Type: String
+    Default: forestcover
+    AllowedPattern: "^[a-z]{1,12}"
+    ConstraintDescription: The ProjectName can be up to 12 characters, lowercase letters (a-z) only.
+  UserExecutionRole:
+    Description: The SageMaker execution role name to be added to the project
+    Type: String
+    Default: forestcover
+    # RegEx from the IAM CreateRole doc
+    AllowedPattern: '[\w+=,.@-]{1,64}'
+    ConstraintDescription: Must be a valid IAM Role Name
+  # TODO: Make creation of notebook instance (and lc config) optional
+Resources:
+
+  # Main sandbox bucket to use for experimentation:
+  PersonalSandboxBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      # Use join to drop forbidden IAM Role name characters for bucket name:
+      # Too long with default example user role name
+      #BucketName: !Join ['-', [!Ref ProjectId, 'sandbox', !Join ['-', !Split ['+', !Join ['-', !Split ['=', !Join ['-', !Split [',', !Join ['-', !Split ['@', !Ref UserExecutionRole]]]]]]]] ]]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  # Store generated bucket name in SSM for notebooks to retrieve the location:
+  PersonalSandboxBucketParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: !Sub 'ID of personal artifacts bucket for ${UserExecutionRole}'
+      Name: !Sub '/${ProjectId}-Project/${UserExecutionRole}/SandboxBucket'
+      Type: String
+      Value: !Ref PersonalSandboxBucket
+
+  # Additional sandbox bucket for more persistent artifacts:
+  PersonalArtifactsBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      # Use join to drop forbidden IAM Role name characters for bucket name:
+      # Too long with default example user role name
+      #BucketName: !Join ['-', [!Ref ProjectId, 'artifacts', !Join ['-', !Split ['+', !Join ['-', !Split ['=', !Join ['-', !Split [',', !Join ['-', !Split ['@', !Ref UserExecutionRole]]]]]]]] ]]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  # Store generated bucket name in SSM for notebooks to retrieve the location:
+  PersonalArtifactsBucketParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: !Sub 'ID of personal artifacts bucket for ${UserExecutionRole}'
+      Name: !Sub '/${ProjectId}-Project/${UserExecutionRole}/ArtifactsBucket'
+      Type: String
+      Value: !Ref PersonalArtifactsBucket
+
+  # Policy for access to personal (sandbox) resources
+  PersonalAccessPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: !Sub '${ProjectId}-${UserExecutionRole}-prs'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: !Sub 'PersonalBucketsAccess'
+            Effect: Allow
+            Action:
+              - 's3:*'
+            Resource:
+              - !GetAtt PersonalArtifactsBucket.Arn
+              - !Sub '${PersonalArtifactsBucket.Arn}/*'
+              - !GetAtt PersonalSandboxBucket.Arn
+              - !Sub '${PersonalSandboxBucket.Arn}/*'
+      Roles:
+        - !Ref UserExecutionRole
+
+  # Policy for access to shared (project) resources
+  ProjectAccessPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: !Sub '${ProjectId}-${UserExecutionRole}-prj'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: IAMPassRole
+            Effect: Allow
+            Action: 
+              - 'iam:PassRole'
+            Resource: 'arn:aws:iam::*:role/*'  # TODO: Do we need to scope this down?
+            Condition:
+              StringEquals:
+                iam:PassedToService:
+                  - 'sagemaker.amazonaws.com'
+                  - 'glue.amazonaws.com'
+                  - 'robomaker.amazonaws.com'
+                  - 'states.amazonaws.com'
+          - Sid: IAMAssumeSudoRole
+            Effect: Allow
+            Action:
+              - 'sts:AssumeRole'
+            Resource: !Sub '{{resolve:ssm:/${ProjectId}-Project/SudoRole:1}}'
+          - Sid: S3ReadOnlyActions
+            Effect: Allow
+            Action:
+              - 's3:DescribeJob'
+              - 's3:GetAccessPoint*'
+              - 's3:GetAccountPublicAccessBlock'
+              - 's3:GetAnalyticsConfiguration'
+              - 's3:GetBucket*'
+              - 's3:GetEncryptionConfiguration'
+              - 's3:GetInventoryConfiguration'
+              - 's3:GetLifecycleConfiguration'
+              - 's3:GetMetricsConfiguration'
+              - 's3:GetObject*'
+              - 's3:ListBucket*'
+              - 's3:ListBucketVersions'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/${ProjectId}-Project/SourceBucket:1}}'
+              - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/${ProjectId}-Project/SourceBucket:1}}/*'
+              - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/${ProjectId}-Project/ArtifactsBucket:1}}'
+              - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/${ProjectId}-Project/ArtifactsBucket:1}}/*'
+              - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/${ProjectId}-Project/MonitoringBucket:1}}'
+              - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/${ProjectId}-Project/MonitoringBucket:1}}/*'
+          - Sid: SSMParamRead
+            # Allow notebook to read SSM params to locate buckets/etc
+            # (NOTE: This wildcarding allows datasci to see the location of other datasci's sandboxes)
+            Effect: Allow
+            Action:
+              - 'ssm:GetParameter'
+              - 'ssm:GetParameterHistory'
+              - 'ssm:GetParameters'
+              - 'ssm:GetParametersByPath'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectId}-Project/*'
+      Roles:
+        - !Ref UserExecutionRole
+
+  # Could make a case for notebook configs to be either individual or standardized across project
+  NotebookConfig:
+    Type: AWS::SageMaker::NotebookInstanceLifecycleConfig
+    Properties:
+      # Use join to drop forbidden IAM Role name characters:
+      NotebookInstanceLifecycleConfigName: !Join ['-', [!Ref ProjectId, !Join ['-', !Split ['+', !Join ['-', !Split ['=', !Join ['-', !Split [',', !Join ['-', !Split ['@', !Ref UserExecutionRole]]]]]]]] ]]
+      OnStart:
+        - Content:
+            Fn::Base64: !Sub |
+              #!/bin/bash
+              set -e
+
+              # Install extension for ipywidgets interactivity:
+              sudo -u ec2-user -i <<'EOF'
+              source /home/ec2-user/anaconda3/bin/activate JupyterSystemEnv
+              jupyter labextension install @jupyter-widgets/jupyterlab-manager
+              source /home/ec2-user/anaconda3/bin/deactivate
+              EOF
+
+              # Set env vars
+              touch /etc/profile.d/jupyter-env.sh
+              cat << 'EOF' >> /etc/profile.d/jupyter-env.sh
+              export PROJECT_ID='${ProjectId}'
+              EOF
+              initctl restart jupyter-server --no-wait
+
+  NotebookInstance:
+    Type: AWS::SageMaker::NotebookInstance
+    Properties:
+      InstanceType: ml.t3.medium
+      LifecycleConfigName: !GetAtt NotebookConfig.NotebookInstanceLifecycleConfigName
+      # Otherwise it gets some garbage name by default:
+      NotebookInstanceName: !Sub '${ProjectId}-${AWS::StackName}'
+      RoleArn: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${UserExecutionRole}'
+      VolumeSizeInGB: 20
+      DefaultCodeRepository: https://github.com/apac-ml-tfc/frugal-mlops
+
+Outputs:
+  PersonalSandboxBucket:
+    Value: !Ref PersonalSandboxBucket
+    Description: Main sandbox bucket to use for experimentation
+  PersonalArtifactsBucket:
+    Value: !Ref PersonalArtifactsBucket
+    Description: Additional sandbox bucket for more persistent artifacts
+  NotebookInstance:
+    Value: !Ref NotebookInstance
+    Description: Individual SageMaker Notebook Instance for work on this project

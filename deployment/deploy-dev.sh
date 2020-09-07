@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# Build the `project` and `sandbox` stacks and deploy the `demo` stack from which they can be provisioned
-# NOTE: If `demo` is already provisioned, this will not update the Service Catalog products to new
-# CloudFormation templates!
+# Build and deploy the `project` and `sandbox` stacks together against an existing SageMaker role.
 
 # Arguments:
 STAGINGS3=$1
-STACKNAME=$2
-AWSPROFILE=$3
+PROJECTID=$2
+ROLENAME=$3
+EMAILADDRESS=$4
+AWSPROFILE=$5
 
 # Configuration:
-DEMO_CF_TPLFILE=demo.yml
+# Project is an AWS SAM stack, others are currently plain CloudFormation:
 PROJECT_SAM_TPLFILE=project.sam.yml
 PROJECT_CF_TPLFILE=project.tmp.yml
 SANDBOX_CF_TPLFILE=sandbox.yml
@@ -26,21 +26,27 @@ CYAN='\033[0;36m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color (end)
 
-if [ -z "$STAGINGS3" ]
+if [ -z "$STAGINGS3" ] || [ -z "$PROJECTID" ] || [ -z "$ROLENAME" ] || [ -z "$EMAILADDRESS" ]
 then
     echo -e "${RED}Argument Error:${NC} Deploy script usage"
     echo ""
-    echo "./deploy-dev.sh {StagingS3} {StackName} [AWSProfile]"
+    echo "./deploy-dev.sh {StagingS3} {ProjectId} {RoleName} {EmailAddress} [AWSProfile]"
     echo ""
     echo "StagingS3: Name of an existing S3 bucket for AWS SAM to build to and deploy from"
-    echo "StackName: CloudFormation stack name to deploy for demo environment"
+    echo "ProjectId: <=12 character lowercase ML project ID to deploy"
+    echo "RoleName: Existing SageMaker execution role name to grant access to the project"
+    echo "    and sandbox"
+    echo "EmailAddress: Valid email address to send deployment pipeline approval requests"
     echo "AWSProfile: (Optional) named AWS CLI login profile to use for requests"
     exit 1
 fi
 
+
 echo -e "Using '${CYAN}${AWSPROFILE}${NC}' as AWS profile"
 echo -e "Using '${CYAN}${STAGINGS3}${NC}' as staging S3 bucket"
-echo -e "Using '${CYAN}${STACKNAME}${NC}' as CloudFormation stack name"
+echo -e "Using '${CYAN}${PROJECTID}${NC}' as project ID"
+echo -e "Using '${CYAN}${ROLENAME}${NC}' as SageMaker role"
+echo -e "Using '${CYAN}${EMAILADDRESS}${NC}' as manager email address"
 
 # Exit if any build/deploy step fails:
 set -e
@@ -62,19 +68,29 @@ echo "[Project] Copying final CloudFormation template to S3..."
 aws s3 cp $PROJECT_CF_TPLFILE "s3://${STAGINGS3}/project.yaml" --profile $AWSPROFILE
 echo "[Sandbox] Copying final CloudFormation template to S3..."
 aws s3 cp $SANDBOX_CF_TPLFILE "s3://${STAGINGS3}/sandbox.yaml" --profile $AWSPROFILE
-echo "[Demo] Copying final CloudFormation template to S3..."
-aws s3 cp $DEMO_CF_TPLFILE "s3://${STAGINGS3}/demo.yaml" --profile $AWSPROFILE
 
-echo "Running SAM deploy..."
-# Here we deliberately don't --no-fail-on-empty--changeset, because an empty changeset probably won't do what
-# you're expecting (update the `project` or `sandbox` products in Service Catalog)
+echo "[Project] Running SAM deploy..."
 sam deploy \
-    --template-file $DEMO_CF_TPLFILE \
-    --stack-name $STACKNAME \
+    --template-file $PROJECT_CF_TPLFILE \
+    --stack-name ${PROJECTID}-project \
     --capabilities CAPABILITY_NAMED_IAM \
     --profile $AWSPROFILE \
+    --no-fail-on-empty-changeset \
     --parameter-overrides \
-        DataSciProjectTemplateUrl=https://${STAGINGS3}.s3.amazonaws.com/project.yaml \
-        DataSciSandboxTemplateUrl=https://${STAGINGS3}.s3.amazonaws.com/sandbox.yaml
+        ProjectId=$PROJECTID \
+        ManagerEmail=$EMAILADDRESS \
+        BaseSageMakerRoleName=$ROLENAME
+
+# The 'aws cloudformation deploy' command has basically same interface - we'll use SAM for consistency:
+echo "[Sandbox] Running SAM deploy..."
+sam deploy \
+    --template-file $SANDBOX_CF_TPLFILE \
+    --stack-name ${PROJECTID}-sandbox \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --profile $AWSPROFILE \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides \
+        ProjectId=$PROJECTID \
+        UserExecutionRole=$ROLENAME
 
 echo -e "${CYAN}Full stack deployed!${NC}"
