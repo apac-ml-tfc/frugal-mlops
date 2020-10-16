@@ -7,17 +7,23 @@ import os
 import pickle
 
 # External Dependencies:
+from pytorch_tabnet.tab_model import TabNetClassifier, TabNetRegressor
 import torch
 
 logger = logging.getLogger()
 
 
 def model_fn(model_dir):
-    with open(os.path.join(model_dir, "model.pkl"), "rb") as f:
-        model = pickle.load(f)
-    # TODO: Don't seem to be able to get these logs to show?
-    print("Model loaded from pickle")
-    logger.info("Model loaded from pickle")
+    logger.info("Loading model metadata")
+    with open(os.path.join(model_dir, "metadata.json"), "r") as f:
+        config = json.loads(f.read())
+
+    model_path = os.path.join(model_dir, "tabnet.zip")
+    logger.info(f"Loading model from {model_path}")
+    model = TabNetClassifier() if config.get("modelType") == "classification" else TabNetRegressor()
+    model.load_model(model_path)
+    logger.info("Model loaded")
+
     return model
 
 

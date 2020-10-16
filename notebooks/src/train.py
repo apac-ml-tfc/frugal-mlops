@@ -1,6 +1,7 @@
 """Train PyTorch TabNet"""
 
 # Python Built-Ins:
+import json
 import logging
 import os
 import pickle
@@ -82,8 +83,9 @@ def train(args):
     fit_params = {
         "X_train": X_train,
         "y_train": y_train,
-        "X_valid": X_val,
-        "y_valid": y_val,
+        "eval_set": [(X_val, y_val)],
+        "eval_name": ["validation"], #(Could provide multiple sets, last one is used for early stopping)
+        #eval_metrics=['?'], (Accuracy by default)
         "max_epochs": args.max_epochs,
         "patience": args.patience,
         # weights unsupported
@@ -99,10 +101,12 @@ def train(args):
     model.fit(**fit_params)
     logger.info("model.fit() complete")
 
-    # TODO: Better/more efficient save method than pickle
-    # TODO: Checkpointing through the training process
-    with open(os.path.join(args.model_dir, "model.pkl"), "wb") as f:
-        pickle.dump(model, f)
+    with open(os.path.join(args.model_dir, "metadata.json"), "w") as f:
+        f.write(json.dumps({
+            "modelType": args.model_type,
+        }))
+
+    model.save_model(os.path.join(args.model_dir, "tabnet"))
 
 
 if __name__ == "__main__":
