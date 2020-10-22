@@ -37,6 +37,7 @@ def get_model(args):
         "n_steps": args.n_steps,
         "gamma": args.gamma,
         "cat_idxs": args.cat_idxs,
+        "cat_dims": args.cat_dims,
         "cat_emb_dim": args.cat_emb_dim,
         "n_independent": args.n_independent,
         "n_shared": args.n_shared,
@@ -107,6 +108,7 @@ def train(args):
         }))
 
     model.save_model(os.path.join(args.model_dir, "tabnet"))
+    return model
 
 
 if __name__ == "__main__":

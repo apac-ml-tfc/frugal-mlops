@@ -67,8 +67,9 @@ def list_hyperparam_withparser(parser, default=None, ignore_error=False):
     return lambda raw: list(map(safe_mapper if ignore_error else unsafe_mapper, list_hyperparam(raw)))
 
 
-def parse_args():
-    hps = json.loads(os.environ["SM_HPS"])
+def parse_args(cmd_args=None):
+    """Parse config arguments from the command line, or cmd_args instead if supplied"""
+    hps = json.loads(os.environ.get("SM_HPS", "{}"))
     parser = argparse.ArgumentParser(description="Train PyTorch-TabNet")
 
     ## Network parameters:
@@ -125,11 +126,15 @@ def parse_args():
         help="List of categorical feature indexes."
     )
     parser.add_argument(
+        "--cat-dims", type=list_hyperparam_withparser(int),
+        default=hps.get("cat-dims", []),
+        help="List of dimensions (number of unique values) of each categorical feature."
+    )
+    parser.add_argument(
         "--cat-emb-dim", type=list_hyperparam_withparser(int, default=1),
         default=hps.get("cat-emb-dim", [1]),
         help="List of categorical embedding sizes for each categorical feature (Or a single number to share)"
     )
-    # TODO: Is there a missing arg here?
 
     ## Training process parameters:
     parser.add_argument("--seed", "--random-seed", type=int,
@@ -197,7 +202,7 @@ def parse_args():
     parser.add_argument("--train", type=str, default=os.environ.get("SM_CHANNEL_TRAIN"))
     parser.add_argument("--validation", type=str, default=os.environ.get("SM_CHANNEL_VALIDATION"))
 
-    args = parser.parse_args()
+    args = parser.parse_args(args=cmd_args)
 
     ## Post-argparse validations & transformations:
 
