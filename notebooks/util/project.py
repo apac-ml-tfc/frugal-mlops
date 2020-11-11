@@ -137,7 +137,7 @@ class ProjectSession:
                     )
                 )
 
-    def submit_model(data, wait=False):
+    def submit_model(self, data, wait=False):
         """Submit a candidate model from data science workbench to project approval flow
 
         If wait is falsy, simply start a Step Function for the model approval/deployment pipeline, and return
