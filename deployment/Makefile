@@ -24,7 +24,7 @@ build.project: ##=> Build and package the ML Project stack only
 	$(info [*] Building ML Project SAM stack...)
 	sam build \
 			--use-container \
-			--template project.sam.yml \
+			--template project.sam.yaml \
 			$(SAM_BUILD_EXTRA_ARGS) && \
 		sam package \
 			--s3-bucket $${DEPLOYMENT_BUCKET_NAME} \
@@ -50,7 +50,7 @@ build.sandbox: ##=> Build and package the ML Sandbox stack only
 	$(info [*] Building ML Sandbox SAM stack...)
 	sam build \
 			--use-container \
-			--template sandbox.yml \
+			--template sandbox.yaml \
 			$(SAM_BUILD_EXTRA_ARGS) && \
 		sam package \
 			--s3-bucket $${DEPLOYMENT_BUCKET_NAME} \
