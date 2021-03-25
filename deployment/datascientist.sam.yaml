@@ -1,0 +1,188 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+#Transform: 'AWS::Serverless-2016-10-31'  # This template is currently plain CloudFormation - no SAM
+
+Description: >-
+  Provision a user in SageMaker Studio, with options for enabling SageMaker Project templates and cloning in
+  a default code repository. Requires the 'ML Environment' stack be provisioned in advance.
+
+Parameters:
+  StudioUserName:
+    Description: >-
+      A username (3-15 lowercase letters) for SageMaker Studio which will also be used in S3 bucket names,
+      etc.
+    Type: String
+    AllowedPattern: "^[a-z]{3,15}"
+    # AllowedPattern: "^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,15}$"
+    ConstraintDescription: Must be 3-15 characters, lowercase letters (a-z) only.
+
+  PreWarmDataScienceApp:
+    Description: >-
+      Set 'yes' to create the SageMaker user an app for the standard data science kernel during template
+      deployment, which will accelerate opening notebooks but deploy an ml.t3.medium type instance straight
+      away.
+    Type: String
+    Default: 'yes'
+    AllowedValues:
+      - 'yes'
+      - 'no'
+
+  DefaultCodeRepo:
+    Description: Optional URL of a git repository to clone in to the user's SageMaker Studio home folder.
+    Type: String
+    Default: ''
+
+  ForceRefreshToken:
+    Description: >-
+      Optional token parameter to force this stack's descriptive resources (e.g. pointer to existing SMStudio
+      domain) to update, to consume changes applied externally.
+    Type: Number
+    Default: 0
+
+Mappings: 
+  RegionMap:
+    af-south-1:
+      DataScienceImageURI: 'arn:aws:sagemaker:af-south-1:559312083959:image/datascience-1.0'
+    ap-east-1:
+      DataScienceImageURI: 'arn:aws:sagemaker:ap-east-1:493642496378:image/datascience-1.0'
+    ap-northeast-1: 
+      DataScienceImageURI: 'arn:aws:sagemaker:ap-northeast-1:102112518831:image/datascience-1.0'
+    ap-northeast-2:
+      DataScienceImageURI: 'arn:aws:sagemaker:ap-northeast-2:806072073708:image/datascience-1.0'
+    ap-south-1:
+      DataScienceImageURI: 'arn:aws:sagemaker:ap-south-1:394103062818:image/datascience-1.0'
+    ap-southeast-1:
+      DataScienceImageURI: 'arn:aws:sagemaker:ap-southeast-1:492261229750:image/datascience-1.0'
+    ap-southeast-2:
+      DataScienceImageURI: 'arn:aws:sagemaker:ap-southeast-2:452832661640:image/datascience-1.0'
+    ca-central-1:
+      DataScienceImageURI: 'arn:aws:sagemaker:ca-central-1:310906938811:image/datascience-1.0'
+    eu-central-1: 
+      DataScienceImageURI: 'arn:aws:sagemaker:eu-central-1:936697816551:image/datascience-1.0'
+    eu-north-1:
+      DataScienceImageURI: 'arn:aws:sagemaker:eu-north-1:243637512696:image/datascience-1.0'
+    eu-south-1:
+      DataScienceImageURI: 'arn:aws:sagemaker:eu-south-1:592751261982:image/datascience-1.0'
+    eu-west-1:
+      DataScienceImageURI: 'arn:aws:sagemaker:eu-west-1:470317259841:image/datascience-1.0'
+    eu-west-2:
+      DataScienceImageURI: 'arn:aws:sagemaker:eu-west-2:712779665605:image/datascience-1.0'
+    eu-west-3:
+      DataScienceImageURI: 'arn:aws:sagemaker:eu-west-3:615547856133:image/datascience-1.0'
+    sa-east-1:
+      DataScienceImageURI: 'arn:aws:sagemaker:sa-east-1:782484402741:image/datascience-1.0'
+    us-east-1: 
+      DataScienceImageURI: 'arn:aws:sagemaker:us-east-1:081325390199:image/datascience-1.0'
+    us-east-2:
+      DataScienceImageURI: 'arn:aws:sagemaker:us-east-2:429704687514:image/datascience-1.0'
+    us-west-1: 
+      DataScienceImageURI: 'arn:aws:sagemaker:us-west-1:742091327244:image/datascience-1.0'
+    us-west-2: 
+      DataScienceImageURI: 'arn:aws:sagemaker:us-west-2:236514542706:image/datascience-1.0'
+
+Conditions:
+  DoPreWarmDataScienceApp: !Equals [!Ref PreWarmDataScienceApp, 'yes']
+
+Resources:
+
+  # SageMaker Execution Role specific for this new user
+  SageMakerExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      Path: '/MLEnv/DataScienceRoles/'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSageMakerFullAccess'
+
+  # Actual resource instantiation: Clone the CodeRepo into the user's SMStudio EFS home folder
+  # (And also enable SageMaker Projects permissions)
+  ExistingDomainDetails:
+    Type: 'Custom::ExistingSageMakerStudioDomain'
+    Properties:
+      ServiceToken: !Sub '{{resolve:ssm:/MLEnvSetup/CFnDescribeDomainLambdaArn:1}}'
+      ForceRefreshToken: !Ref ForceRefreshToken
+
+  UserProfile:
+    Type: 'AWS::SageMaker::UserProfile'
+    Properties:
+      DomainId: !GetAtt ExistingDomainDetails.DomainId
+      UserProfileName: !Ref StudioUserName
+      UserSettings:
+        ExecutionRole: !GetAtt SageMakerExecutionRole.Arn
+  # Note !Ref of this resource seems to return bar-separated name & domain, like mydemouser|d-zlsx5suitbtv
+
+  # Need an additional custom resource to retrieve the EFS user ID for the created user profile:
+  UserProfileDetails:
+    Type: 'Custom::ExistingSageMakerStudioUserProfile'
+    DependsOn:
+      - UserProfile
+    Properties:
+      ServiceToken: !Sub '{{resolve:ssm:/MLEnvSetup/CFnDescribeUserProfileLambdaArn:1}}'
+      UserProfileName: !Ref StudioUserName
+      ForceRefreshToken: !Ref ForceRefreshToken
+
+  # Pre-provision the user's "Default" JupyterServer app to speed up first login
+  UserDefaultApp:
+    Type: 'AWS::SageMaker::App'
+    DependsOn:
+      - UserProfile
+    Properties:
+      AppName: default
+      AppType: JupyterServer
+      DomainId: !GetAtt ExistingDomainDetails.DomainId
+      ResourceSpec:
+        InstanceType: system
+      UserProfileName: !Ref StudioUserName
+
+  # (If selected), pre-provision an environment for data science kernels on ml.t3.medium, to speed up initial
+  # notebook open
+  DataScienceApp:
+    Type: 'AWS::SageMaker::App'
+    Condition: DoPreWarmDataScienceApp
+    DependsOn:
+      - UserProfile
+    Properties: 
+      AppName: datascience-1-0-ml-t3-medium-stackprovisioned
+      AppType: KernelGateway
+      DomainId: !GetAtt ExistingDomainDetails.DomainId
+      ResourceSpec: 
+        InstanceType: ml.t3.medium
+        SageMakerImageArn: !FindInMap
+          - RegionMap
+          - !Ref 'AWS::Region'
+          - DataScienceImageURI
+      UserProfileName: !Ref StudioUserName
+
+  # Clone the default code repo into the user's SMStudio EFS home folder, if provided, and also enable
+  # SageMaker Projects permissions
+  UserSetup:
+    Type: 'Custom::UserSetup'
+    DependsOn:
+      - UserProfile
+    Properties:
+      ServiceToken: !Sub '{{resolve:ssm:/MLEnvSetup/CFnStudioUserSetupLambdaArn:1}}'
+      DomainId: !GetAtt ExistingDomainDetails.DomainId
+      UserProfileName: !Ref StudioUserName
+      HomeEfsFileSystemUid: !GetAtt UserProfileDetails.HomeEfsFileSystemUid
+      GitRepository: !Ref DefaultCodeRepo
+      EnableProjects: True
+
+  # Expose our Service Catalog portfolio to the role, so the data scientist can see the ML Project template
+  # through the SMStudio Projects interface
+  SCMLPortfolioPrincipalAssoc:
+    Type: 'AWS::ServiceCatalog::PortfolioPrincipalAssociation'
+    Properties:
+      PortfolioId: !Sub '{{resolve:ssm:/MLEnvSetup/SCMLPortfolioID:1}}'
+      PrincipalARN: !GetAtt SageMakerExecutionRole.Arn
+      PrincipalType: IAM
+
+Outputs:
+  UserProfileName:
+    Description: SageMaker Studio user profile
+    Value: !Ref StudioUserName

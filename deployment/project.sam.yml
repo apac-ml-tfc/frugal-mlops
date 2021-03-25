@@ -1,20 +1,36 @@
-# CloudFormation for an ML project (potentially touching several containers, users)
+---
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: 'AWS::Serverless-2016-10-31'
+
+Description: >-
+  ML Project template for running in the frugal-MLOps demo environment.
+
 Parameters:
   ProjectId:
-    Description: Used as a prefix for project resources.  Can be up to 12 characters, lowercase letters (a-z) only.
+    Description: Used as a prefix for project resources.  3-15 characters, lowercase letters (a-z) only.
     Type: String
     Default: forestcover
-    AllowedPattern: "^[a-z]{1,12}"
-    ConstraintDescription: The ProjectId can be up to 12 characters, lowercase letters (a-z) only.
+    AllowedPattern: "^[a-z]{3,15}"
+    ConstraintDescription: The ProjectId can be 3-15 characters, lowercase letters (a-z) only.
+
   ManagerEmail:
     Description: Project manager email address, to which approval requests for deployments will be sent.
     Type: String
     AllowedPattern: "^[\\x20-\\x45]?[\\w-\\+]+(\\.[\\w]+)*@[\\w-]+(\\.[\\w]+)*(\\.[a-z]{2,})$"
     ConstraintDescription: Must be a valid email address.
-Resources:
 
+  SageMakerProjectId:
+    Description: Service generated Id of the project (leave blank if provisioning outside SageMaker).
+    Type: String
+    Default: ''
+
+  SageMakerProjectName:
+    Description: Name of the project per SageMaker Projects
+    Type: String
+    AllowedPattern: "^[a-zA-Z0-9](-*[a-zA-Z0-9])*$"
+    Default: 'arfbarf'
+
+Resources:
 
 ##########  REPOSITORIES  ##########
   # Source code repository (not currently used in the sample notebooks)
@@ -126,11 +142,11 @@ Resources:
 
   # A lot of this is just copied from AmazonSageMakerFullAccess (which we don't currently grant to
   # ProjectSudoRole, in prep for trying to trim down the access)
-  ProjectReadAccessPolicy:
+  ProjectDataSciencePolicy:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
-      ManagedPolicyName: !Sub '${ProjectId}-ProjectReadAccess'
-      Path: !Sub '/${ProjectId}/'
+      ManagedPolicyName: !Sub '${ProjectId}-ProjectDataScience'
+      Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -207,6 +223,23 @@ Resources:
               - !Sub '${ArtifactsBucket.Arn}/*'
               - !GetAtt LiveMonitoringBucket.Arn
               - !Sub '${LiveMonitoringBucket.Arn}/*'
+          - Sid: SSMParamRead
+            # Allow notebook to read SSM params to locate buckets/etc
+            # (NOTE: This wildcarding allows datasci to see the location of other datasci's sandboxes)
+            Effect: Allow
+            Action:
+              - 'ssm:GetParameter'
+              - 'ssm:GetParameterHistory'
+              - 'ssm:GetParameters'
+              - 'ssm:GetParametersByPath'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectId}-Project/*'
+          - Sid: STSAssumeProjectSudoRole
+            Effect: Allow
+            Action:
+              - 'sts:AssumeRole'
+            Resource:
+              - !GetAtt ProjectSudoRole.Arn
           - Sid: IAMCreateAutoScalingRole
             Effect: Allow
             Action: 'iam:CreateServiceLinkedRole'
@@ -299,11 +332,19 @@ Resources:
               - 'sns:ListTopics'
             Resource: '*'
 
+  ProjectDataSciencePolicyArnParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: ARN of the project's 'sudo' role
+      Name: !Sub '/${ProjectId}-Project/DataSciencePolicyArn'
+      Type: String
+      Value: !Ref ProjectDataSciencePolicy
+
   ProjectWriteAccessPolicy:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
       ManagedPolicyName: !Sub '${ProjectId}-ProjectWriteAccess'
-      Path: !Sub '/${ProjectId}/'
+      Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -369,8 +410,19 @@ Resources:
                 - sagemaker.amazonaws.com
             Action:
               - 'sts:AssumeRole'
+          - Effect: Allow
+            # Here we allow *any* /MLEnv/DataScienceRoles/* to assume the project Sudo role from trust policy
+            # side, because only those who have been granted permission to sts:AssumeRole on this role will
+            # be able to anyway. No wildcarding supported in Principal, so we do it via Condition instead.
+            Principal:
+              AWS: 'arn:aws:iam::024103970757:root'
+            Action:
+              - 'sts:AssumeRole'
+            Condition:
+              StringLike:
+                # (Not sure why it's 'role' as opposed to 'assumed-role', but whatever)
+                aws:PrincipalArn: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/MLEnv/DataScienceRoles/*'
       ManagedPolicyArns:
-        - !Ref ProjectReadAccessPolicy
         - !Ref ProjectWriteAccessPolicy
 
   ProjectSudoRoleParam:

@@ -1,0 +1,1043 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+
+Description: >-
+  MLOps base environment template. Provisions SMStudio domain; some VPC/Lambda apparatus to support cloning
+  sample code into SMStudio users' accounts in downstream stacks; and service catalog entries.
+
+Parameters:
+  SCPrincipal:
+    Type: String
+    Description: >-
+      Optional IAM principal you'll use to provision the "ML Project" product from service catalog (i.e. the
+      role or user you use in the AWS console). ARN suffix e.g. 'role/Admin'.
+    Default: ''
+    # If running in EE, you probably want to set this to role/TeamRole in the team version of the template -
+    # or e.g. role/Admin for an account you log in to as the Admin role.
+    # (Stack will fail if this principal does not exist in target account - e.g. TeamRole in master acct)
+
+  UseExistingSageMakerServiceCatalogRoles:
+    Type: String
+    Description: >-
+      Set 'yes' if service roles AmazonSageMakerServiceCatalogProductsUseRole and 
+      AmazonSageMakerServiceCatalogProductsLaunchRole have already been created in this account, otherwise
+      'no'.
+    Default: 'no'
+    AllowedValues:
+      - 'yes'
+      - 'no'
+
+  VpcId:
+    Type: String
+    Description: VPC ID to use (e.g. vpc-xxxxxx), or blank to use default.
+    Default: ''
+
+  SubnetIds:
+    Type: String
+    Description: >-
+      Comma-separated list of subnet IDs to use (e.g. subnet-xxxxxx), or blank to use all default subnets.
+    Default: ''
+
+Conditions:
+  AssociateSCPrincipal: !Not [!Equals [!Ref SCPrincipal, '']]
+  CreateSageMakerServiceCatalogRoles: !Equals [!Ref UseExistingSageMakerServiceCatalogRoles, 'no']
+
+Resources:
+
+########  THE BASICS: SageMaker perms & notebook instance  ########
+
+  # Permissions for the SageMaker notebook environment:
+  BaseSageMakerExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      Path: '/MLEnv/'
+      # Can keep perms minimal:
+      # ManagedPolicyArns:
+      #   - 'arn:aws:iam::aws:policy/AmazonSageMakerFullAccess'
+
+
+########  SAGEMAKER STUDIO SETUP & USER CREATION  ########
+
+  # Permissions for custom resource Lambda:
+  EnvSetupLambdaPolicy:
+    # TODO: Scope setup Lambda permissions down further
+    # Would be good to scope more perms down to the current region & account ID for e.g.
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Path: '/DataSciSetup/'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: GetVPCsAndSubnets
+            Effect: Allow
+            Action:
+              - ec2:AssignPrivateIpAddresses  # (Only needed for user post-setup)
+              - ec2:CreateNetworkInterface  # (Only needed for user post-setup)
+              - ec2:DeleteNetworkInterface  # (Only needed for user post-setup)
+              - ec2:DescribeNetworkInterfaces  # (Only needed for user post-setup)
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeSubnets
+              - ec2:DescribeVpcs
+              - ec2:UnassignPrivateIpAddresses  # (Only needed for user post-setup)
+            Resource:
+              - '*'
+          - Sid: StudioEFSWrite  # (Only needed for user post-setup)
+            Effect: Allow
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientRootAccess
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:DescribeMountTargets
+            Resource: '*'  # TODO: Restrict
+          - Sid: IAMAttachDataSciPolicy  # For data science policy attachment
+            Effect: Allow
+            Action:
+              - 'iam:AttachRolePolicy'
+              - 'iam:DetachRolePolicy'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/MLEnv/*'  # Any role  # /MLEnv/DataScienceRoles/
+            Condition:
+              ArnLike:
+                iam:PolicyARN: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/MLEnv/Projects/*'
+          - Sid: IAMGetStudioUserRole  # Required for AssociatePrincipalWithPortfolio
+            Effect: Allow
+            Action:
+              - iam:GetRole
+            Resource:
+              #- '*'  # TODO: Could scope this down if we use paths on datasci roles
+              - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/MLEnv/*'
+          - Sid: SageMakerDefaultAppSetup
+            Effect: Allow
+            Action:
+              - sagemaker:CreateApp
+            # App ARNs go app/${DomainId}/${UserProfileName}/${AppType}/${AppName}
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:app/*/*/jupyterserver/*'
+          - Sid: SageMakerDomainPermission
+            Effect: Allow
+            Action:
+              - 'sagemaker:CreateDomain'
+              - 'sagemaker:DeleteDomain'
+              - 'sagemaker:DescribeDomain'
+              - 'sagemaker:UpdateDomain'
+              - 'sagemaker:CreateUserProfile'
+              - 'sagemaker:DeleteUserProfile'
+              - 'sagemaker:DescribeUserProfile'
+              - 'sagemaker:ListDomains'
+              - 'sagemaker:UpdateUserProfile'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:sagemaker:*:*:domain/*'
+              - !Sub 'arn:${AWS::Partition}:sagemaker:*:*:user-profile/*'
+          - Sid: CreateSageMakerServiceLinkedRole
+            Effect: Allow
+            Action:
+              - iam:CreateServiceLinkedRole
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/sagemaker.amazonaws.com/AWSServiceRoleForAmazonSageMakerNotebooks'
+          - Sid: SageMakerProjectsPermission
+            Effect: Allow
+            Action:
+              - servicecatalog:AcceptPortfolioShare
+              - sagemaker:EnableSagemakerServicecatalogPortfolio
+              - sagemaker:DisableSagemakerServicecatalogPortfolio
+            Resource: '*'
+          - Sid: ServiceCatalogPermission  # TODO: Can this be scoped down?
+            Effect: Allow
+            Action:
+              - servicecatalog:*
+            Resource: '*'
+          - Sid: SageMakerExecPassRole
+            Effect: Allow
+            Action:
+              - iam:PassRole
+            Resource: !GetAtt BaseSageMakerExecutionRole.Arn
+
+  # Access role for CFN custom resource lambdas (user setup)
+  EnvSetupLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Ref EnvSetupLambdaPolicy
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Path: '/DataSciSetup/'
+
+  # Shared layer loading the cfn-response module (doesn't seem to auto-import with SAM Lambdas)
+  LambdaCommonLayer:
+    Type: 'AWS::Serverless::LayerVersion'
+    Properties:
+      ContentUri: ./setupfns/setup-lambda-common/
+      CompatibleRuntimes:
+        - python3.8
+        - python3.7
+        - python3.6
+    Metadata:
+      BuildMethod: python3.8
+
+  # Custom resource implementation for creating SMStudio domains
+  StudioDomainFunction:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Description: CloudFormation custom resource implementation for SageMaker Studio domain
+      CodeUri: ./setupfns/domain/
+      Handler: main.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt EnvSetupLambdaRole.Arn
+      Runtime: python3.8
+      Timeout: 900
+      Layers:
+        - !Ref LambdaCommonLayer
+
+  StudioDomain:
+    Type: 'Custom::StudioDomain'
+    Properties:
+      ServiceToken: !GetAtt StudioDomainFunction.Arn
+      EnableProjects: True
+      VPC: !Ref VpcId
+      SubnetIds: !Ref SubnetIds
+      DomainName: 'PoCDomain'
+      DefaultUserSettings:
+        ExecutionRole: !GetAtt BaseSageMakerExecutionRole.Arn
+
+
+########  PRE-CLONING GIT REPO TO SAGEMAKER STUDIO ENVIRONMENT  ########
+## This is easy on a notebook instance (see above) but requires a few more steps for Studio
+
+  # First we'll need to set up an access point for the EFS filesystem backing our Studio domain:
+  StudioEFSAccessPoint:
+    Type: 'AWS::EFS::AccessPoint'
+    Properties:
+      FileSystemId: !GetAtt StudioDomain.HomeEfsFileSystemId
+      PosixUser:
+        Gid: '0'
+        Uid: '0'
+
+  # - To access EFS a Lambda function needs to be deployed in VPC.
+  # - VPC-deployed Lambdas do not get public IP addresses by default, so can't reach internet even if an
+  #   internet gateway / relevant security groups are in place: so we need a NAT Gateway.
+  # Hence all this VPC stuff...
+  # (We'll create just a single-AZ deployment for our user setup Lambda to keep things simple)
+  LambdaSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !GetAtt StudioDomain.ProposedAdminSubnetCidr
+      # TODO: Support IPv6
+      #AssignIpv6AddressOnCreation: false
+      #Ipv6CidrBlock: !Select [3, !Cidr [!Select [0, !GetAtt 'VPC.Ipv6CidrBlocks'], 4, 64]]
+      VpcId: !GetAtt StudioDomain.VpcId
+      Tags:
+      - Key: Name
+        Value: 'StudioSetupLambdaSubnet'
+  LambdaRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !GetAtt StudioDomain.VpcId
+      Tags:
+        - Key: Name
+          Value: 'StudioSetupLambdaSubnet'
+  LambdaRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref LambdaSubnet
+      RouteTableId: !Ref LambdaRouteTable
+  NatGatewayEIP:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+  NatGateway:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Select [0, !Split [',', !GetAtt StudioDomain.SubnetIds]]
+  LambdaNatGatewayRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref LambdaRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway
+
+  LambdaPublicAccessSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: >-
+        Security group conferring public internet access to SageMaker Studio user setup Lambda
+      SecurityGroupEgress:
+        - CidrIp: '0.0.0.0/0'
+          Description: All traffic
+          IpProtocol: '-1'
+      SecurityGroupIngress:
+        - CidrIp: '0.0.0.0/0'
+          Description: All traffic
+          IpProtocol: '-1'
+      VpcId: !GetAtt StudioDomain.VpcId
+
+  # Now ready to define the implementation of our custom resource:
+  CFnStudioUserSetup:
+    Type: 'AWS::Serverless::Function'
+    DependsOn:
+      - StudioEFSAccessPoint
+      - LambdaNatGatewayRoute
+      - LambdaRouteTableAssociation
+      - NatGateway
+    Properties:
+      Description: CloudFormation custom resource implementation for SageMaker Studio user post-create setup
+      CodeUri: ./setupfns/usersetup/
+      Handler: main.lambda_handler
+      Role: !GetAtt EnvSetupLambdaRole.Arn
+      Runtime: python3.8
+      Timeout: 300
+      Layers:
+        # 3rd party layer to install Git binaries on Lambda function. 
+        # See: https://github.com/lambci/git-lambda-layer
+        - !Sub 'arn:aws:lambda:${AWS::Region}:553035198032:layer:git-lambda2:8'
+        - !Ref LambdaCommonLayer
+      FileSystemConfigs:
+        - Arn: !GetAtt StudioEFSAccessPoint.Arn
+          LocalMountPath: /mnt/efs
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaPublicAccessSecurityGroup  # Public access for fetching from GitHub/etc
+          - !GetAtt StudioDomain.OutboundEFSSecurityGroupId  # Access to connect to Studio home filesystem
+          - !GetAtt StudioDomain.InboundEFSSecurityGroupId  # TODO: Is this actually needed?
+        SubnetIds:
+          - !Ref LambdaSubnet
+
+  CFnStudioUserSetupParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: ARN of the CFn custom resource Lambda for setting up new SMStudio users
+      Name: '/MLEnvSetup/CFnStudioUserSetupLambdaArn'
+      Type: String
+      Value: !GetAtt CFnStudioUserSetup.Arn
+
+  CFnDescribeDomain:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Description: CloudFormation custom resource to describe existing SMStudio domain
+      CodeUri: ./setupfns/describedomain/
+      Handler: main.lambda_handler
+      Role: !GetAtt EnvSetupLambdaRole.Arn
+      Runtime: python3.8
+      Timeout: 900
+      Layers:
+        - !Ref LambdaCommonLayer
+
+  CFnDescribeDomainParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: ARN of the CFn custom resource Lambda to describe an existing SMStudio domain
+      Name: '/MLEnvSetup/CFnDescribeDomainLambdaArn'
+      Type: String
+      Value: !GetAtt CFnDescribeDomain.Arn
+
+  CFnDescribeUserProfile:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Description: CloudFormation custom resource to describe existing SMStudio user profile
+      CodeUri: ./setupfns/describeuser/
+      Handler: main.lambda_handler
+      Role: !GetAtt EnvSetupLambdaRole.Arn
+      Runtime: python3.8
+      Timeout: 900
+      Layers:
+        - !Ref LambdaCommonLayer
+
+  CFnDescribeUserProfileParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: ARN of the CFn custom resource Lambda to describe an existing SMStudio user profile
+      Name: '/MLEnvSetup/CFnDescribeUserProfileLambdaArn'
+      Type: String
+      Value: !GetAtt CFnDescribeUserProfile.Arn
+
+  CFnPolicyAttachment:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Description: >-
+        CloudFormation custom resource to attach an existing policy to an existing SMStudio user's execution
+        role
+      CodeUri: ./setupfns/policyattachment/
+      Handler: main.lambda_handler
+      Role: !GetAtt EnvSetupLambdaRole.Arn
+      Runtime: python3.8
+      Timeout: 900
+      Layers:
+        - !Ref LambdaCommonLayer
+
+  CFnPolicyAttachmentParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: >-
+        ARN of the CFn custom resource Lambda to attach an existing policy to an existing SMStudio user's
+        execution role
+      Name: '/MLEnvSetup/CFnPolicyAttachmentLambdaArn'
+      Type: String
+      Value: !GetAtt CFnPolicyAttachment.Arn
+
+
+########  SERVICE CATALOG: Provisioning for an ML Project Environment  ########
+
+  SCMLLaunchRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: servicecatalog.amazonaws.com
+          Action: 'sts:AssumeRole'
+      Description: Launch role for ML Service Catalog products
+      Path: '/DataSciSetup/'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess  # TODO: Scope down
+
+  SCMLPortfolio:
+    Type: 'AWS::ServiceCatalog::Portfolio'
+    Properties:
+      Description: Example SC portfolio for MLOps workshop
+      DisplayName: ML Demo Portfolio
+      ProviderName: ML DEMO
+
+  SCMLPortfolioParam:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: >-
+        ID of the Service Catalog Portfolio created for this ML environment
+      Name: '/MLEnvSetup/SCMLPortfolioID'
+      Type: String
+      Value: !Ref SCMLPortfolio
+
+  SCDataScientistProduct:
+    Type: 'AWS::ServiceCatalog::CloudFormationProduct'
+    Properties:
+      Description: >-
+        Data scientist user account. This template sets up a new data scientist with a SageMaker Studio user
+      Distributor: ML DEMO
+      Name: Data Scientist User Account
+      Owner: !Sub 'Demo stack: ${AWS::StackName}'
+      ProvisioningArtifactParameters: 
+        - Description: Initial version
+          Info:
+            # TO BE POPULATED BY BUILD SCRIPT:
+            LoadTemplateFromURL: $DataScienceUserCFURL
+          Name: v1
+      SupportDescription: 'Sample stack - N/A'
+
+  # Decouple Project stack launch from user's AWS Console permissions:
+  SCDataScientistProductLaunchConstraint:
+    Type: AWS::ServiceCatalog::LaunchRoleConstraint
+    DependsOn:  # Saw some intermittent provisioning failures before we added these three together:
+      - SCMLPortfolio
+      - SCDataScientistProduct
+      - SCMLLaunchRole
+    Properties:
+      PortfolioId: !Ref SCMLPortfolio
+      ProductId: !Ref SCDataScientistProduct
+      RoleArn: !GetAtt SCMLLaunchRole.Arn
+
+  SCDataScientistProductPortfolioAssoc:
+    Type: 'AWS::ServiceCatalog::PortfolioProductAssociation'
+    Properties:
+      PortfolioId: !Ref SCMLPortfolio
+      ProductId: !Ref SCDataScientistProduct
+
+  SCMLProjectProduct:
+    Type: 'AWS::ServiceCatalog::CloudFormationProduct'
+    Properties:
+      Description: >-
+        ML project environment for frugal-mlops example
+      Distributor: ML DEMO
+      Name: ML Project (frugal MLOps)
+      Owner: !Sub 'Demo stack: ${AWS::StackName}'
+      ProvisioningArtifactParameters: 
+        - Description: Initial version
+          Info:
+            # TO BE POPULATED BY BUILD SCRIPT:
+            LoadTemplateFromURL: $MLProjectCFURL
+          Name: v1
+      SupportDescription: 'Sample stack - N/A'
+      Tags:
+        - Key: 'sagemaker:studio-visibility'
+          Value: 'true'
+
+  # Decouple Project stack launch from user's AWS Console permissions:
+  SCMLProjectProductLaunchConstraint:
+    Type: AWS::ServiceCatalog::LaunchRoleConstraint
+    DependsOn:  # Saw some intermittent provisioning failures before we added these three together:
+      - SCMLPortfolio
+      - SCMLProjectProduct
+      - SCMLLaunchRole
+    Properties:
+      PortfolioId: !Ref SCMLPortfolio
+      ProductId: !Ref SCMLProjectProduct
+      RoleArn: !GetAtt SCMLLaunchRole.Arn
+
+  SCMLProjectProductPortfolioAssoc:
+    Type: 'AWS::ServiceCatalog::PortfolioProductAssociation'
+    Properties:
+      PortfolioId: !Ref SCMLPortfolio
+      ProductId: !Ref SCMLProjectProduct
+
+  SCMLPortfolioPrincipalAssoc:
+    Type: 'AWS::ServiceCatalog::PortfolioPrincipalAssociation'
+    Condition: AssociateSCPrincipal
+    Properties:
+      PortfolioId: !Ref SCMLPortfolio
+      PrincipalARN: !Sub 'arn:aws:iam::${AWS::AccountId}:${SCPrincipal}'
+      PrincipalType: IAM
+
+  SCMLSandboxProduct:
+    Type: 'AWS::ServiceCatalog::CloudFormationProduct'
+    Properties:
+      Description: >-
+        Provide a data scientist access to an ML project, with personal sandbox.
+      Distributor: ML DEMO
+      Name: ML Project Data Science Sandbox
+      Owner: !Sub 'Demo stack: ${AWS::StackName}'
+      ProvisioningArtifactParameters: 
+        - Description: Initial version
+          Info:
+            # TO BE POPULATED BY BUILD SCRIPT:
+            LoadTemplateFromURL: $MLSandboxCFURL
+          Name: v1
+      SupportDescription: 'Sample stack - N/A'
+
+  # Decouple Project stack launch from user's AWS Console permissions:
+  SCMLSandboxProductLaunchConstraint:
+    Type: AWS::ServiceCatalog::LaunchRoleConstraint
+    DependsOn:  # Saw some intermittent provisioning failures before we added these three together:
+      - SCMLPortfolio
+      - SCMLSandboxProduct
+      - SCMLLaunchRole
+    Properties:
+      PortfolioId: !Ref SCMLPortfolio
+      ProductId: !Ref SCMLSandboxProduct
+      RoleArn: !GetAtt SCMLLaunchRole.Arn
+
+  SCMLSandboxProductPortfolioAssoc:
+    Type: 'AWS::ServiceCatalog::PortfolioProductAssociation'
+    Properties:
+      PortfolioId: !Ref SCMLPortfolio
+      ProductId: !Ref SCMLSandboxProduct
+
+
+########  REQUIRED SERVICE ROLES: For SageMaker Projects/JumpStart to work  ########
+  # MODIFIED from console role:
+  # - Allow s3:GetObject broadened from resources 'arn:aws:s3:::sagemaker-*' to '*'
+  # TODO: Is it possible to restore this back to just the standard role?
+  AmazonSageMakerServiceCatalogProductsLaunchRole:
+    Type: 'AWS::IAM::Role'
+    Condition: CreateSageMakerServiceCatalogRoles
+    Properties:
+      RoleName: AmazonSageMakerServiceCatalogProductsLaunchRole
+      Description: >-
+        SageMaker role created from the SageMaker AWS Management Console. This role has the permissions
+        required to launch the Amazon SageMaker portfolio of products from AWS ServiceCatalog.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 'servicecatalog.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Path: '/service-role/'
+      MaxSessionDuration: 3600
+      Policies: 
+        - PolicyName: AmazonSageMakerAdmin-ServiceCatalogProductsServiceRolePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'apigateway:GET'
+                  - 'apigateway:POST'
+                  - 'apigateway:PUT'
+                  - 'apigateway:PATCH'
+                  - 'apigateway:DELETE'
+                Resource: '*'
+                Condition:
+                  StringLike:
+                    'aws:ResourceTag/sagemaker:launch-source': '*'
+              - Effect: Allow
+                Action:
+                  - 'apigateway:POST'
+                Resource: '*'
+                Condition:
+                  'ForAnyValue:StringLike':
+                    'aws:TagKeys':
+                      - 'sagemaker:launch-source'
+              - Effect: Allow
+                Action:
+                  - 'apigateway:PATCH'
+                Resource:
+                  - 'arn:aws:apigateway:*::/account'
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:CreateStack'
+                  - 'cloudformation:UpdateStack'
+                  - 'cloudformation:DeleteStack'
+                Resource: 'arn:aws:cloudformation:*:*:stack/SC-*'
+                Condition:
+                  ArnLikeIfExists:
+                    'cloudformation:RoleArn':
+                      - 'arn:aws:sts::*:assumed-role/AmazonSageMakerServiceCatalog*'
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:DescribeStackEvents'
+                  - 'cloudformation:DescribeStacks'
+                Resource: 'arn:aws:cloudformation:*:*:stack/SC-*'
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:GetTemplateSummary'
+                  - 'cloudformation:ValidateTemplate'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'codebuild:CreateProject'
+                  - 'codebuild:DeleteProject'
+                  - 'codebuild:UpdateProject'
+                Resource:
+                  - 'arn:aws:codebuild:*:*:project/sagemaker-*'
+              - Effect: Allow
+                Action:
+                  - 'codecommit:CreateCommit'
+                  - 'codecommit:CreateRepository'
+                  - 'codecommit:DeleteRepository'
+                  - 'codecommit:GetRepository'
+                  - 'codecommit:TagResource'
+                Resource:
+                  - 'arn:aws:codecommit:*:*:sagemaker-*'
+              - Effect: Allow
+                Action:
+                  - 'codecommit:ListRepositories'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'codepipeline:CreatePipeline'
+                  - 'codepipeline:DeletePipeline'
+                  - 'codepipeline:GetPipeline'
+                  - 'codepipeline:GetPipelineState'
+                  - 'codepipeline:StartPipelineExecution'
+                  - 'codepipeline:TagResource'
+                  - 'codepipeline:UpdatePipeline'
+                Resource:
+                  - 'arn:aws:codepipeline:*:*:sagemaker-*'
+              - Effect: Allow
+                Action:
+                  - 'cognito-idp:CreateUserPool'
+                Resource: '*'
+                Condition:
+                  'ForAnyValue:StringLike':
+                    'aws:TagKeys':
+                      - 'sagemaker:launch-source'
+              - Effect: Allow
+                Action:
+                  - 'cognito-idp:CreateGroup'
+                  - 'cognito-idp:CreateUserPoolDomain'
+                  - 'cognito-idp:CreateUserPoolClient'
+                  - 'cognito-idp:DeleteGroup'
+                  - 'cognito-idp:DeleteUserPool'
+                  - 'cognito-idp:DeleteUserPoolClient'
+                  - 'cognito-idp:DeleteUserPoolDomain'
+                  - 'cognito-idp:DescribeUserPool'
+                  - 'cognito-idp:DescribeUserPoolClient'
+                  - 'cognito-idp:UpdateUserPool'
+                  - 'cognito-idp:UpdateUserPoolClient'
+                Resource: '*'
+                Condition:
+                  StringLike:
+                    'aws:ResourceTag/sagemaker:launch-source': '*'
+              - Action:
+                  - 'ecr:CreateRepository'
+                  - 'ecr:DeleteRepository'
+                Resource:
+                  - 'arn:aws:ecr:*:*:repository/sagemaker-*'
+                Effect: Allow
+              - Effect: Allow
+                Action:
+                  - 'events:DescribeRule'
+                  - 'events:DeleteRule'
+                  - 'events:DisableRule'
+                  - 'events:EnableRule'
+                  - 'events:PutRule'
+                  - 'events:PutTargets'
+                  - 'events:RemoveTargets'
+                Resource:
+                  - 'arn:aws:events:*:*:rule/sagemaker-*'
+              - Effect: Allow
+                Action:
+                  - 'firehose:CreateDeliveryStream'
+                  - 'firehose:DeleteDeliveryStream'
+                  - 'firehose:DescribeDeliveryStream'
+                  - 'firehose:StartDeliveryStreamEncryption'
+                  - 'firehose:StopDeliveryStreamEncryption'
+                  - 'firehose:UpdateDestination'
+                Resource: 'arn:aws:firehose:*:*:deliverystream/sagemaker-*'
+              - Action:
+                  - 'glue:CreateDatabase'
+                  - 'glue:DeleteDatabase'
+                Resource:
+                  - 'arn:aws:glue:*:*:catalog'
+                  - 'arn:aws:glue:*:*:database/sagemaker-*'
+                  - 'arn:aws:glue:*:*:table/sagemaker-*'
+                  - 'arn:aws:glue:*:*:userDefinedFunction/sagemaker-*'
+                Effect: Allow
+              - Action:
+                  - 'glue:CreateClassifier'
+                  - 'glue:DeleteClassifier'
+                  - 'glue:DeleteCrawler'
+                  - 'glue:DeleteJob'
+                  - 'glue:DeleteTrigger'
+                  - 'glue:DeleteWorkflow'
+                  - 'glue:StopCrawler'
+                Resource:
+                  - '*'
+                Effect: Allow
+              - Action:
+                  - 'glue:CreateWorkflow'
+                Resource:
+                  - 'arn:aws:glue:*:*:workflow/sagemaker-*'
+                Effect: Allow
+              - Action:
+                  - 'glue:CreateJob'
+                Resource:
+                  - 'arn:aws:glue:*:*:job/sagemaker-*'
+                Effect: Allow
+              - Action:
+                  - 'glue:CreateCrawler'
+                  - 'glue:GetCrawler'
+                Resource:
+                  - 'arn:aws:glue:*:*:crawler/sagemaker-*'
+                Effect: Allow
+              - Action:
+                  - 'glue:CreateTrigger'
+                  - 'glue:GetTrigger'
+                Resource:
+                  - 'arn:aws:glue:*:*:trigger/sagemaker-*'
+                Effect: Allow
+              - Effect: Allow
+                Action:
+                  - 'iam:PassRole'
+                Resource:
+                  - 'arn:aws:iam::*:role/service-role/AmazonSageMakerServiceCatalog*'
+              - Effect: Allow
+                Action:
+                  - 'lambda:AddPermission'
+                  - 'lambda:CreateFunction'
+                  - 'lambda:DeleteFunction'
+                  - 'lambda:GetFunction'
+                  - 'lambda:GetFunctionConfiguration'
+                  - 'lambda:InvokeFunction'
+                  - 'lambda:RemovePermission'
+                Resource:
+                  - 'arn:aws:lambda:*:*:function:sagemaker-*'
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:DeleteLogGroup'
+                  - 'logs:DeleteLogStream'
+                  - 'logs:DescribeLogGroups'
+                  - 'logs:DescribeLogStreams'
+                  - 'logs:PutRetentionPolicy'
+                Resource:
+                  - 'arn:aws:logs:*:*:log-group:/aws/apigateway/AccessLogs/*'
+                  - 'arn:aws:logs:*:*:log-group::log-stream:*'
+              - Effect: Allow
+                Action: 's3:GetObject'
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    's3:ExistingObjectTag/servicecatalog:provisioning': 'true'
+              - Effect: Allow
+                Action: 's3:GetObject'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 's3:CreateBucket'
+                  - 's3:DeleteBucket'
+                  - 's3:DeleteBucketPolicy'
+                  - 's3:GetBucketPolicy'
+                  - 's3:PutBucketAcl'
+                  - 's3:PutBucketNotification'
+                  - 's3:PutBucketPolicy'
+                  - 's3:PutBucketPublicAccessBlock'
+                  - 's3:PutBucketLogging'
+                  - 's3:PutEncryptionConfiguration'
+                Resource: 'arn:aws:s3:::sagemaker-*'
+              - Action:
+                  - 'sagemaker:CreateEndpoint'
+                  - 'sagemaker:CreateEndpointConfig'
+                  - 'sagemaker:CreateModel'
+                  - 'sagemaker:CreateWorkteam'
+                  - 'sagemaker:DeleteEndpoint'
+                  - 'sagemaker:DeleteEndpointConfig'
+                  - 'sagemaker:DeleteModel'
+                  - 'sagemaker:DeleteWorkteam'
+                  - 'sagemaker:DescribeModel'
+                  - 'sagemaker:DescribeEndpointConfig'
+                  - 'sagemaker:DescribeEndpoint'
+                  - 'sagemaker:DescribeWorkteam'
+                Resource:
+                  - 'arn:aws:sagemaker:*:*:*'
+                Effect: Allow
+              - Action:
+                  - 'states:CreateStateMachine'
+                  - 'states:DeleteStateMachine'
+                  - 'states:UpdateStateMachine'
+                Resource:
+                  - 'arn:aws:states:*:*:stateMachine:sagemaker-*'
+                Effect: Allow
+
+  # MODIFIED from the standard AWS Console role as follows:
+  # S3 s3:CreateBucket and other co-listed grants broadened from:
+  # - arn:aws:s3:::aws-glue-*
+  # - arn:aws:s3:::sagemaker-*
+  # ...to '*'
+  #
+  # S3 s3:AbortMultipartUpload and co-listed grants broadened from:
+  # - arn:aws:s3:::aws-glue-*
+  # - arn:aws:s3:::sagemaker-*
+  # ...to '*'
+  AmazonSageMakerServiceCatalogProductsUseRole:
+    Type: 'AWS::IAM::Role'
+    Condition: CreateSageMakerServiceCatalogRoles
+    Properties:
+      RoleName: AmazonSageMakerServiceCatalogProductsUseRole
+      Description: >-
+        SageMaker role created from the SageMaker AWS Management Console. This role has the permissions
+        required to use the Amazon SageMaker portfolio of products from AWS ServiceCatalog.
+      Path: '/service-role/'
+      MaxSessionDuration: 3600 
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+                - apigateway.amazonaws.com
+                - lambda.amazonaws.com
+                - codebuild.amazonaws.com
+                - sagemaker.amazonaws.com
+                - glue.amazonaws.com
+                - events.amazonaws.com
+                - states.amazonaws.com
+                - codepipeline.amazonaws.com
+                - firehose.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies: 
+        - PolicyName: AmazonSageMakerServiceCatalogProductsUseRole-20210122T152377
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - 'cloudformation:CreateChangeSet'
+                  - 'cloudformation:CreateStack'
+                  - 'cloudformation:DescribeChangeSet'
+                  - 'cloudformation:DeleteChangeSet'
+                  - 'cloudformation:DeleteStack'
+                  - 'cloudformation:DescribeStacks'
+                  - 'cloudformation:ExecuteChangeSet'
+                  - 'cloudformation:SetStackPolicy'
+                  - 'cloudformation:UpdateStack'
+                Resource: 'arn:aws:cloudformation:*:*:stack/sagemaker-*'
+                Effect: Allow
+              - Action:
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+                Effect: Allow
+              - Action:
+                  - 'codebuild:BatchGetBuilds'
+                  - 'codebuild:StartBuild'
+                Resource:
+                  - 'arn:aws:codebuild:*:*:project/sagemaker-*'
+                  - 'arn:aws:codebuild:*:*:build/sagemaker-*'
+                Effect: Allow
+              - Action:
+                  - 'codecommit:CancelUploadArchive'
+                  - 'codecommit:GetBranch'
+                  - 'codecommit:GetCommit'
+                  - 'codecommit:GetUploadArchiveStatus'
+                  - 'codecommit:UploadArchive'
+                Resource: 'arn:aws:codecommit:*:*:sagemaker-*'
+                Effect: Allow
+              - Action:
+                  - 'codepipeline:StartPipelineExecution'
+                Resource: 'arn:aws:codepipeline:*:*:sagemaker-*'
+                Effect: Allow
+              - Action:
+                  - 'ec2:DescribeRouteTables'
+                Resource: '*'
+                Effect: Allow
+              - Action:
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:BatchGetImage'
+                  - 'ecr:Describe*'
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ecr:GetDownloadUrlForLayer'
+                Resource: '*'
+                Effect: Allow
+              - Action:
+                  - 'ecr:BatchDeleteImage'
+                  - 'ecr:CompleteLayerUpload'
+                  - 'ecr:CreateRepository'
+                  - 'ecr:DeleteRepository'
+                  - 'ecr:InitiateLayerUpload'
+                  - 'ecr:PutImage'
+                  - 'ecr:UploadLayerPart'
+                Effect: Allow
+                Resource:
+                  - 'arn:aws:ecr:*:*:repository/sagemaker-*'
+              - Action:
+                  - 'events:DeleteRule'
+                  - 'events:DescribeRule'
+                  - 'events:PutRule'
+                  - 'events:PutTargets'
+                  - 'events:RemoveTargets'
+                Resource:
+                  - 'arn:aws:events:*:*:rule/sagemaker-*'
+                Effect: Allow
+              - Action:
+                  - 'firehose:PutRecord'
+                  - 'firehose:PutRecordBatch'
+                Resource: 'arn:aws:firehose:*:*:deliverystream/sagemaker-*'
+                Effect: Allow
+              - Action:
+                  - glue:BatchCreatePartition
+                  - glue:BatchDeletePartition
+                  - glue:BatchDeleteTable
+                  - glue:BatchDeleteTableVersion
+                  - glue:BatchGetPartition
+                  - glue:CreateDatabase
+                  - glue:CreatePartition
+                  - glue:CreateTable
+                  - glue:DeletePartition
+                  - glue:DeleteTable
+                  - glue:DeleteTableVersion
+                  - glue:GetDatabase
+                  - glue:GetPartition
+                  - glue:GetPartitions
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:GetTableVersion
+                  - glue:GetTableVersions
+                  - glue:SearchTables
+                  - glue:UpdatePartition
+                  - glue:UpdateTable
+                Effect: Allow
+                Resource:
+                  - arn:aws:glue:*:*:catalog
+                  - arn:aws:glue:*:*:database/default
+                  - arn:aws:glue:*:*:database/global_temp
+                  - arn:aws:glue:*:*:database/sagemaker-*
+                  - arn:aws:glue:*:*:table/sagemaker-*
+                  - arn:aws:glue:*:*:tableVersion/sagemaker-*
+              - Action:
+                  - iam:PassRole
+                Effect: Allow
+                Resource:
+                  - arn:aws:iam::*:role/service-role/AmazonSageMakerServiceCatalogProductsUse*
+              - Action:
+                  - lambda:InvokeFunction
+                Effect: Allow
+                Resource:
+                  - arn:aws:lambda:*:*:function:sagemaker-*
+              - Action:
+                  - logs:CreateLogDelivery
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DeleteLogDelivery
+                  - logs:Describe*
+                  - logs:GetLogDelivery
+                  - logs:GetLogEvents
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:UpdateLogDelivery
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:GetBucketAcl
+                  - s3:GetBucketCors
+                  - s3:GetBucketLocation
+                  - s3:ListAllMyBuckets
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                  - s3:PutBucketCors
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                  - s3:AbortMultipartUpload
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                  - sagemaker:*
+                Effect: Allow
+                NotResource:
+                  - arn:aws:sagemaker:*:*:domain/*
+                  - arn:aws:sagemaker:*:*:user-profile/*
+                  - arn:aws:sagemaker:*:*:app/*
+                  - arn:aws:sagemaker:*:*:flow-definition/*
+              - Action:
+                  - states:DescribeExecution
+                  - states:DescribeStateMachine
+                  - states:DescribeStateMachineForExecution
+                  - states:GetExecutionHistory
+                  - states:ListExecutions
+                  - states:ListTagsForResource
+                  - states:StartExecution
+                  - states:StopExecution
+                  - states:TagResource
+                  - states:UntagResource
+                  - states:UpdateStateMachine
+                Effect: Allow
+                Resource:
+                  - arn:aws:states:*:*:stateMachine:sagemaker-*
+                  - arn:aws:states:*:*:execution:sagemaker-*:*
+              - Action:
+                  - states:ListStateMachines
+                Effect: Allow
+                Resource: '*'
+
+Outputs:
+  DomainId:
+    Description: SageMaker Studio Domain ID
+    Value: !GetAtt StudioDomain.DomainId
+  SubnetIds:
+    Description: VPC Subnet IDs
+    Value: !GetAtt StudioDomain.SubnetIds
+  CFnLambdaDescribeDomain:
+    Description: CloudFormation custom resource Lambda to describe an existing SMStudio domain
+    Value: !GetAtt CFnDescribeDomain.Arn
+  CFnLambdaDescribeUserProfile:
+    Description: CloudFormation custom resource Lambda to describe an existing SMStudio user profile
+    Value: !GetAtt CFnDescribeUserProfile.Arn
+  CFnLambdaUserSetup:
+    Description: CloudFormation custom resource Lambda with access to SMStudio EFS
+    Value: !GetAtt CFnStudioUserSetup.Arn
