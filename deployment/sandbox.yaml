@@ -52,7 +52,7 @@ Resources:
     Type: 'AWS::SSM::Parameter'
     Properties:
       Description: !Sub 'ID of personal artifacts bucket for ${UserProfileDetails.ExecutionRoleName}'
-      Name: !Sub '/${ProjectId}-Project/${UserProfileDetails.ExecutionRoleName}/SandboxBucket'
+      Name: !Sub '/MLEnv/Projects/${ProjectId}/${UserProfileDetails.ExecutionRoleName}/SandboxBucket'
       Type: String
       Value: !Ref PersonalSandboxBucket
 
@@ -74,7 +74,7 @@ Resources:
     Type: 'AWS::SSM::Parameter'
     Properties:
       Description: !Sub 'ID of personal artifacts bucket for ${UserProfileDetails.ExecutionRoleName}'
-      Name: !Sub '/${ProjectId}-Project/${UserProfileDetails.ExecutionRoleName}/ArtifactsBucket'
+      Name: !Sub '/MLEnv/Projects/${ProjectId}/${UserProfileDetails.ExecutionRoleName}/ArtifactsBucket'
       Type: String
       Value: !Ref PersonalArtifactsBucket
 
@@ -104,7 +104,7 @@ Resources:
       ServiceToken: !Sub '{{resolve:ssm:/MLEnvSetup/CFnPolicyAttachmentLambdaArn:1}}'
       Users:
         - !Ref StudioUserName
-      PolicyArn: !Sub '{{resolve:ssm:/${ProjectId}-Project/DataSciencePolicyArn:1}}'
+      PolicyArn: !Sub '{{resolve:ssm:/MLEnv/Projects/${ProjectId}/DataSciencePolicyArn:1}}'
 
 Outputs:
   PersonalSandboxBucket:

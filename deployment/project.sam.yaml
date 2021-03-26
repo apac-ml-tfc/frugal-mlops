@@ -44,7 +44,7 @@ Resources:
     Type: 'AWS::SSM::Parameter'
     Properties:
       Description: ID of the project CodeCommit repository
-      Name: !Sub '/${ProjectId}-Project/CodeCommit'
+      Name: !Sub '/MLEnv/Projects/${ProjectId}/CodeCommit'
       Type: String
       Value: !Ref CodeCommitRepository
 
@@ -62,7 +62,7 @@ Resources:
     Type: 'AWS::SSM::Parameter'
     Properties:
       Description: ID of the project data source bucket
-      Name: !Sub '/${ProjectId}-Project/SourceBucket'
+      Name: !Sub '/MLEnv/Projects/${ProjectId}/SourceBucket'
       Type: String
       Value: !Ref SourceBucket
 
@@ -80,7 +80,7 @@ Resources:
     Type: 'AWS::SSM::Parameter'
     Properties:
       Description: ID of the project artifacts bucket
-      Name: !Sub '/${ProjectId}-Project/ArtifactsBucket'
+      Name: !Sub '/MLEnv/Projects/${ProjectId}/ArtifactsBucket'
       Type: String
       Value: !Ref ArtifactsBucket
 
@@ -98,7 +98,7 @@ Resources:
     Type: 'AWS::SSM::Parameter'
     Properties:
       Description: ID of the project monitoring bucket
-      Name: !Sub '/${ProjectId}-Project/MonitoringBucket'
+      Name: !Sub '/MLEnv/Projects/${ProjectId}/MonitoringBucket'
       Type: String
       Value: !Ref LiveMonitoringBucket
 
@@ -107,8 +107,8 @@ Resources:
   LambdaRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub '${ProjectId}-LambdaRole'
-      Path: !Sub '/${ProjectId}/'
+      #RoleName: !Sub '${ProjectId}-LambdaRole'
+      Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -125,8 +125,8 @@ Resources:
   ModelRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub '${ProjectId}-ModelRole'
-      Path: !Sub '/${ProjectId}/'
+      #RoleName: !Sub '${ProjectId}-ModelRole'
+      Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -145,7 +145,7 @@ Resources:
   ProjectDataSciencePolicy:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
-      ManagedPolicyName: !Sub '${ProjectId}-ProjectDataScience'
+      ManagedPolicyName: !Sub 'ML-${ProjectId}-ProjectDataScience'
       Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       PolicyDocument:
         Version: '2012-10-17'
@@ -233,7 +233,7 @@ Resources:
               - 'ssm:GetParameters'
               - 'ssm:GetParametersByPath'
             Resource:
-              - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectId}-Project/*'
+              - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/MLEnv/Projects/${ProjectId}/*'
           - Sid: STSAssumeProjectSudoRole
             Effect: Allow
             Action:
@@ -336,14 +336,14 @@ Resources:
     Type: 'AWS::SSM::Parameter'
     Properties:
       Description: ARN of the project's 'sudo' role
-      Name: !Sub '/${ProjectId}-Project/DataSciencePolicyArn'
+      Name: !Sub '/MLEnv/Projects/${ProjectId}/DataSciencePolicyArn'
       Type: String
       Value: !Ref ProjectDataSciencePolicy
 
   ProjectWriteAccessPolicy:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
-      ManagedPolicyName: !Sub '${ProjectId}-ProjectWriteAccess'
+      ManagedPolicyName: !Sub 'ML-${ProjectId}-ProjectWriteAccess'
       Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       PolicyDocument:
         Version: '2012-10-17'
@@ -399,8 +399,8 @@ Resources:
   ProjectSudoRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub '${ProjectId}-ProjectSudoRole'
-      Path: !Sub '/${ProjectId}/'
+      RoleName: !Sub 'ML-${ProjectId}-ProjectSudoRole'
+      Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -429,7 +429,7 @@ Resources:
     Type: 'AWS::SSM::Parameter'
     Properties:
       Description: ARN of the project's 'sudo' role
-      Name: !Sub '/${ProjectId}-Project/SudoRole'
+      Name: !Sub '/MLEnv/Projects/${ProjectId}/SudoRole'
       Type: String
       Value: !GetAtt ProjectSudoRole.Arn
 
@@ -437,8 +437,8 @@ Resources:
   StepFunctionsXRayAccessPolicy:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
-      ManagedPolicyName: !Sub '${ProjectId}-StepFnXRayAccess'
-      Path: !Sub '/${ProjectId}/'
+      #ManagedPolicyName: !Sub 'ML-${ProjectId}-StepFnXRayAccess'
+      Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -454,8 +454,8 @@ Resources:
   CloudWatchLogsDeliveryFullAccessPolicy:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
-      ManagedPolicyName: !Sub '${ProjectId}-CWLogsDeliveryFullAccess'
-      Path: !Sub '/${ProjectId}/'
+      #ManagedPolicyName: !Sub 'ML-${ProjectId}-CWLogsDeliveryFullAccess'
+      Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -474,7 +474,7 @@ Resources:
   StepFunctionRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub '${ProjectId}-StepFunctionRole'
+      RoleName: !Sub 'ML-${ProjectId}-StepFunctionRole'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -482,7 +482,7 @@ Resources:
             Principal:
               Service: states.amazonaws.com
             Action: 'sts:AssumeRole'
-      Path: /
+      Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       ManagedPolicyArns:
         # TODO: Restrict down Lambda/SageMaker access to targets only
         - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
@@ -493,7 +493,7 @@ Resources:
   ApiGatewayToStepFunctionsRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub '${ProjectId}-ApiToSFNRole'
+      RoleName: !Sub 'ML-${ProjectId}-ApiToSFNRole'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -501,7 +501,7 @@ Resources:
             Principal:
               Service: apigateway.amazonaws.com
             Action: 'sts:AssumeRole'
-      Path: /
+      Path: !Sub '/MLEnv/Projects/${ProjectId}/'
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs'
         - 'arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess'
@@ -733,6 +733,6 @@ Resources:
     Type: 'AWS::SSM::Parameter'
     Properties:
       Description: ARN of the project's model submission pipeline
-      Name: !Sub '/${ProjectId}-Project/PipelineStateMachine'
+      Name: !Sub '/MLEnv/Projects/${ProjectId}/PipelineStateMachine'
       Type: String
       Value: !Ref PipelineStateMachine

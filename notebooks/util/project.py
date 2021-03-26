@@ -75,7 +75,7 @@ class ProjectSession:
         self.source_bucket = None
         self.sudo_role = None
         param_ssm_names = {
-            f"/{project_id}-Project/{s}": { "cat": "shared", "id": s } for s in shared_param_ids
+            f"/MLEnv/Projects/{project_id}/{s}": { "cat": "shared", "id": s } for s in shared_param_ids
         }
 
         if role is None:
@@ -85,12 +85,12 @@ class ProjectSession:
             sandbox_param_ids = ["ArtifactsBucket", "SandboxBucket"]
             self.sandbox = SimpleNamespace(artifacts_bucket=None, sandbox_bucket=None)
             for s in sandbox_param_ids:
-                param_ssm_names[f"/{project_id}-Project/{role_name}/{s}"] = { "cat": "sandbox", "id": s }
+                param_ssm_names[f"/MLEnv/Projects/{project_id}/{role_name}/{s}"] = { "cat": "sandbox", "id": s }
 
         response = ssm.get_parameters(Names=[s for s in param_ssm_names])
         n_invalid = len(response.get("InvalidParameters", []))
         if n_invalid == len(param_ssm_names):
-            raise ValueError(f"Found no valid SSM parameters for /{project_id}-Project: Invalid project ID")
+            raise ValueError(f"Found no valid SSM parameters for /MLEnv/Projects/{project_id}: Invalid project ID")
         elif n_invalid > 0:
             logger.warning(" ".join([
                 f"{n_invalid} Project parameters missing from SSM: Some functionality may not work as",
