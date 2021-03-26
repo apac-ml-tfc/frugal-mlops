@@ -23,10 +23,10 @@ def ensure_home_dir(uid):
     # The root of the EFS contains folders named for each user UID, but these may not be created before
     # the user has first logged in (could os.listdir("/mnt/efs") to check):
     logger.info(f"Checking/creating home folder for user {uid}")
-    home_folder = f"/mnt/efs/{efs_uid}"
+    home_folder = f"/mnt/efs/{uid}"
     os.makedirs(home_folder, exist_ok=True)
     # Set correct ownership permissions for this folder straight away, in case a later process errors out
-    os.chown(home_folder, int(efs_uid), -1)
+    os.chown(home_folder, int(uid), -1)
     return home_folder
 
 
