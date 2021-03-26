@@ -45,4 +45,4 @@ def clone_git_repository(efs_uid, git_repo):
 
     # Remember to set ownership/permissions for all the stuff we just created, to give the user write
     # access:
-    content.chown_recursive(f"{home_folder}/{repo_folder_name}", uid=int(efs_uid))
+    chown_recursive(f"{home_folder}/{repo_folder_name}", uid=int(efs_uid))
