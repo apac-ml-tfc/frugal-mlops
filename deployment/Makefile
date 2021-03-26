@@ -142,7 +142,8 @@ deploy: ##=> Deploy (create or update) ML Environment
 			--template-file environment.tmp.yaml \
 			--stack-name $(STACK_NAME) \
 			--capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
-			--parameters SCPrincipal=$(SC_PRINCIPAL) \
+			--no-fail-on-empty-changeset \
+			--parameter-overrides SCPrincipal=$(SC_PRINCIPAL) \
 			  UseExistingSageMakerServiceCatalogRoles=$(USE_EXISTING_SC_ROLES)
 
 deploy.project: ##=> Deploy (create or update) ML Project, assuming ML Environment ready
@@ -151,7 +152,8 @@ deploy.project: ##=> Deploy (create or update) ML Project, assuming ML Environme
 			--template-file project.tmp.yaml \
 			--stack-name $(STACK_NAME) \
 			--capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
-			--parameters ManagerEmail=$(MANAGER_EMAIL) \
+			--no-fail-on-empty-changeset \
+			--parameter-overrides ManagerEmail=$(MANAGER_EMAIL) \
 				SageMakerProjectName=$(ML_PROJECT_ID) \
 				ProjectId=$(ML_PROJECT_ID)
 
@@ -161,7 +163,8 @@ deploy.user: ##=> Deploy (create or update) ML User, assuming ML Environment rea
 			--template-file datascientist.tmp.yaml \
 			--stack-name $(STACK_NAME) \
 			--capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
-			--parameters StudioUserName=$(ML_USER_ID) \
+			--no-fail-on-empty-changeset \
+			--parameter-overrides StudioUserName=$(ML_USER_ID) \
 				DefaultCodeRepo=$(USER_DEFAULT_CODE_REPO)
 
 deploy.sandbox: ##=> Deploy (create or update) ML Sandbox stack, assuming Project & User
@@ -170,7 +173,8 @@ deploy.sandbox: ##=> Deploy (create or update) ML Sandbox stack, assuming Projec
 			--template-file sandbox.tmp.yaml \
 			--stack-name $(STACK_NAME) \
 			--capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
-			--parameters ProjectId=$(ML_PROJECT_ID) \
+			--no-fail-on-empty-changeset \
+			--parameter-overrides ProjectId=$(ML_PROJECT_ID) \
 				StudioUserName=$(ML_USER_ID)
 
 
@@ -180,7 +184,7 @@ all: ##=> Build all stacks and create the ML Environment stack
 
 all.complete: ##=> Build all stacks and (try to) deploy the full stack set
 	@$(MAKE) build
-	@$(MAKE) deploy.environment
+	@$(MAKE) deploy
 	@$(MAKE) deploy.user STACK_NAME=frugal-user
 	@$(MAKE) deploy.project STACK_NAME=frugal-project
 	@$(MAKE) deploy.sandbox STACK_NAME=frugal-sandbox
