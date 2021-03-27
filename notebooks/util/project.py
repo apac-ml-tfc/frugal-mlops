@@ -81,7 +81,7 @@ class ProjectSession:
         if role is None:
             self.sandbox = None
         else:
-            role_name = role.partition("/")[2] if role.startswith("arn:") else role
+            role_name = role.rpartition("/")[2] if role.startswith("arn:") else role
             sandbox_param_ids = ["ArtifactsBucket", "SandboxBucket"]
             self.sandbox = SimpleNamespace(artifacts_bucket=None, sandbox_bucket=None)
             for s in sandbox_param_ids:
