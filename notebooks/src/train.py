@@ -6,6 +6,7 @@ import logging
 import os
 import pickle
 import random
+import shutil
 
 # External Dependencies:
 import numpy as np
@@ -15,6 +16,7 @@ from pytorch_tabnet.tab_model import TabNetClassifier, TabNetRegressor
 # Local Dependencies:
 import config
 import data
+from inference import *  # Needed for one-click deploy from Estimator
 
 
 logger = logging.getLogger()
@@ -66,6 +68,34 @@ def get_model(args):
     return ModelClass(**model_params)
 
 
+def copy_all_training_code_to_output(model_dir):
+    """Copy training code to output, to enaable directly deploying via SageMaker SDK's Estimator.deploy()
+
+    To enable directly deploying this model via SageMaker SDK's Estimator.deploy() (rather than needing to
+    create a PyTorchModel with entry_point / source_dir args), we need to save any inference handler
+    function code to model_dir/code. Here we compromise efficiency to the benefit of usage simplicity, by
+    just copying the contents of this training code folder to the model/code folder for inference.
+    """
+    code_path = os.path.join(args.model_dir, "code")
+    logger.info(f"Copying code to {code_path} for inference")
+    for currpath, dirs, files in os.walk("."):
+        for file in files:
+            # Skip any filenames starting with dot:
+            if file.startswith("."):
+                continue
+            filepath = os.path.join(currpath, file)
+            # Skip any pycache or dot folders:
+            if ((os.path.sep + ".") in filepath) or ("__pycache__" in filepath):
+                continue
+            relpath = filepath[len("."):]
+            if relpath.startswith(os.path.sep):
+                relpath = relpath[1:]
+            outpath = os.path.join(code_path, relpath)
+            logger.debug(f"Copying {filepath} to {outpath}")
+            os.makedirs(outpath.rpartition(os.path.sep)[0], exist_ok=True)
+            shutil.copy2(filepath, outpath)
+
+
 def train(args):
     logger.info("Creating config and model")
     model = get_model(args)
@@ -108,6 +138,8 @@ def train(args):
         }))
 
     model.save_model(os.path.join(args.model_dir, "tabnet"))
+
+    copy_all_training_code_to_output(args.model_dir)
     return model
 
 

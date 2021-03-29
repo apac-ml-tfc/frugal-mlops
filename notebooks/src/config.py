@@ -180,7 +180,7 @@ def parse_args(cmd_args=None):
     )
     # drop_last param not supported
 
-    # Resource Management:
+    ## Resource Management:
     parser.add_argument("--num-gpus", type=int, default=os.environ.get("SM_NUM_GPUS", 0),
         help="Number of GPUs to use in training."
     )
@@ -189,7 +189,7 @@ def parse_args(cmd_args=None):
         help="Number of data workers: set higher to accelerate data loading, if CPU and GPUs are powerful"
     )
 
-    # I/O Settings:
+    ## I/O Settings:
     parser.add_argument("--log-level", default=hps.get("log-level", logging.INFO),
         help="Log level (per Python specs, string or int)."
     )
