@@ -20,7 +20,19 @@ def model_fn(model_dir):
 
     model_path = os.path.join(model_dir, "tabnet.zip")
     logger.info(f"Loading model from {model_path}")
-    model = TabNetClassifier() if config.get("modelType") == "classification" else TabNetRegressor()
+
+    model_type = config.get("modelType").lower()
+    if model_type == "classification":
+        model = TabNetClassifier()
+    elif model_type == "regression":
+        model = TabNetRegressor()
+    else:
+        raise ValueError(
+            "Model type '{}' not supported for inference - must be classification or regression".format(
+                model_type,
+            )
+        )
+
     model.load_model(model_path)
     logger.info("Model loaded")
 
@@ -53,10 +65,11 @@ def predict_fn(input_data, model):
         )
         result = model.predict(input_data)
 
-    # Normally if we wanted to offer a mixed single/multi-record request API, we'd probably check at this
-    # point and return a single result rather than a nested array, if the request was single:
-    # return result if is_batch_request else result[0]
+    # The default Model Monitor processor (backed by Dask) is a bit fussy about CSV formatting, so we will:
     #
-    # ...But this would be rendered as Score0\nScore1\nScore2 by the default CSV serializer, rather than
-    # Score0,Score1,Score2 - and the default Model Monitor processor is fussy about CSV formatting:
-    return result
+    # - *Not* offer a mixed single/multi-record request API, and instead always return a 2D array regardless
+    #   of whether the request was single or batch (so results get serialized with commas, not newlines)
+    # - *Round* our results to 3 decimal places so they don't get serialized to scientific notation (e.g.
+    #   1e-5) which Dask does not support.
+    n_decimals = 3
+    return (result * 10**n_decimals).round() / (10**n_decimals)

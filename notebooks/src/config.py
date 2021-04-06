@@ -13,7 +13,7 @@ import sys
 # External Dependencies:
 import torch
 
-MODEL_TYPES=("classification", "regression")
+MODEL_TYPES=("classification", "regression", "unsupervised")
 
 def configure_logger(logger, args):
     """Configure a logger's level and handler (since base container already configures top level logging)"""
@@ -66,6 +66,20 @@ def list_hyperparam_withparser(parser, default=None, ignore_error=False):
 
     return lambda raw: list(map(safe_mapper if ignore_error else unsafe_mapper, list_hyperparam(raw)))
 
+def json_hyperparam(raw):
+    """JSON string argparse type for convenience in SageMaker"""
+    return json.loads(raw)
+
+def json_hyperparam_withtype(allowed_types=[dict]):
+    """JSON string argparse type with isinstance type check after parsing"""
+    def parse_json_hyperparam_withtype(raw):
+        val = json_hyperparam(raw)
+        if not any(isinstance(val, t) for t in allowed_types):
+            raise argparse.ArgumentTypeError(
+                f"JSON hyperparam did not match allowed types {allowed_types} after parsing. Got: {raw}"
+            )
+        return val
+    return parse_json_hyperparam_withtype
 
 def parse_args(cmd_args=None):
     """Parse config arguments from the command line, or cmd_args instead if supplied"""
@@ -118,7 +132,8 @@ def parse_args(cmd_args=None):
     ## Data processing parameters:
     parser.add_argument(
         "--target", type=str, default=hps.get("target", "Target"),
-        help="Name of the target column to predict."
+        help="Name of the target column to predict. (Set to some non-numeric, non-existent name if "
+        "pre-training without target column data)."
     )
     parser.add_argument(
         "--cat-idxs", type=list_hyperparam_withparser(int),
@@ -150,12 +165,27 @@ def parse_args(cmd_args=None):
         help="Learning rate (main training cycle)"
     )
     parser.add_argument(
+        "--lr-scheduler", type=str, default=hps.get("lr-scheduler"),
+        help="Optional name of learning rate scheduler to apply, per torch.optim.lr_scheduler module"
+    )
+    parser.add_argument(
+        "--lr-scheduler-params", type=json_hyperparam_withtype(allowed_types=[dict]),
+        default=hps.get("lr-scheduler-params"),
+        help="Optional dictionary of parameter overrides to apply on --lr-scheduler"
+    )
+    parser.add_argument(
         "--clip-value", type=float, default=hps.get("clip-value"),
         help="Optional gradient value clipping"
     )
+    parser.add_argument(
+        "--mask-type", type=str, default=hps.get("mask-type", "sparsemax"),
+        help="Masking procedure for pre-training: 'entmax' or 'sparsemax'"
+    )
+    parser.add_argument(
+        "--pretraining-ratio", type=float, default=hps.get("pretraining-ratio", 0.3),
+        help="Percentage of features to mask during pre-training"
+    )
     # optimizer_fn param not supported
-    # scheduler_fn param not supported
-    # scheduler_params param not supported
     # model_name param not necessary
     # saving_path param not necessary
     # verbose param see log-level
@@ -201,6 +231,7 @@ def parse_args(cmd_args=None):
     )
     parser.add_argument("--train", type=str, default=os.environ.get("SM_CHANNEL_TRAIN"))
     parser.add_argument("--validation", type=str, default=os.environ.get("SM_CHANNEL_VALIDATION"))
+    parser.add_argument("--pretrained", type=str, default=os.environ.get("SM_CHANNEL_PRETRAINED"))
 
     args = parser.parse_args(args=cmd_args)
 

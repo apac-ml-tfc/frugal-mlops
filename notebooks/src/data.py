@@ -42,9 +42,16 @@ def get_dataset(channel, args):
         return df.to_numpy(), y.to_numpy()
     elif isinstance(args.target, str):
         # args.target is a column name
-        y = df[args.target]
-        df.drop(args.target, axis=1, inplace=True)
-        return df.to_numpy(), y.to_numpy()
+        if args.target in df:
+            y = df[args.target]
+            df.drop(args.target, axis=1, inplace=True)
+            return df.to_numpy(), y.to_numpy()
+        elif args.model_type == "unsupervised":
+            return df.to_numpy(), None
+        else:
+            raise ValueError(
+                f"Target column name '{args.target}' not in {data_path}, and model_type not 'unsupervised'"
+            )
     else:
         raise ValueError(
             f"args.target is neither str (column name) nor int (column index): Got {args.target}"
